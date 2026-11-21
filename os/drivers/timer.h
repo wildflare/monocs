@@ -9,6 +9,7 @@ void timer_init(void);
 void timer_handle_irq(void);
 uint64_t timer_ticks(void);
 uint64_t timer_freq(void);
+uint64_t timer_count(void);     // 細かい時計（CNTPCT_EL0。timer_freq() 回で 1 秒）
 
 // 起動からの経過時間（マイクロ秒）。割り込みなしでも使える
 uint64_t timer_now_us(void);

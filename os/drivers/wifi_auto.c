@@ -14,6 +14,7 @@
 #include <string.h>
 #include <unistd.h>
 #include "../kernel/klog.h"
+#include "sdio.h"
 #include "wifi.h"
 #include "wifi_conf.h"
 #include "wifi_auto.h"
@@ -239,7 +240,9 @@ int wifi_auto_poll(void)
             state = A_OFF;          // チップがない（QEMU など）・ファームウェアがない
             break;
         }
-        klog_printf("wifi: chip ready, scanning");
+        if (wifi_get_info()->sdio_fallback)
+            klog_printf("wifi: SDIO high speed failed (%s); using 25 MHz", wifi_get_info()->sdio_fallback);
+        klog_printf("wifi: chip ready (SDIO %u MHz), scanning", sdio_clock_hz() / 1000000);
         if (wifi_scan_begin() != 0) {
             idle(RETRY_US);
             break;

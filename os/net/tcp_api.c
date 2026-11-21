@@ -18,7 +18,7 @@
 #include "../kernel/svc.h"
 
 #define MAX_CONNS   16
-#define RX_SIZE     (64 * 1024)
+#define RX_SIZE     (128 * 1024)     // 受信の窓（lwipopts.h の TCP_WND、128KB 近く）が入る大きさ
 #define BACKLOG     4
 
 enum { C_FREE, C_LISTENING, C_CONNECTING, C_CONNECTED, C_CLOSED };

@@ -15,6 +15,7 @@
 #include <string.h>
 #include "wifi_cmd.h"
 #include "../drivers/timer.h"
+#include "../drivers/sdio.h"
 #include "../drivers/wifi.h"
 #include "../drivers/wifi_auto.h"
 #include "../drivers/wifi_conf.h"
@@ -200,7 +201,10 @@ static int cmd_status(int, char **)
     }
     char ip[20], mask[20], gw[20];
     bool bound = net_wifi_address(ip, mask, gw, sizeof ip);
-    printf("wifi: connected to \"%s\", %d dBm, %s\n", w->ssid, wifi_rssi(), bound ? "" : "no address yet (DHCP)");
+    uint32_t rate = 0;          // WLC_GET_RATE（12。brcmfmac の BRCMF_C_GET_RATE）: 500kbps 単位
+    wifi_ioctl(12, false, &rate, sizeof rate);
+    printf("wifi: connected to \"%s\", %d dBm, %u.%u Mbps, %s\n", w->ssid, wifi_rssi(), rate / 2, rate % 2 * 5,
+           bound ? "" : "no address yet (DHCP)");
     if (bound)
         printf("wifi: address %s, netmask %s, gateway %s\n", ip, mask, gw);
     printf("wifi: rx %llu data frames, tx %llu (dropped %llu)\n", (unsigned long long)w->rx_data,
@@ -238,6 +242,35 @@ static int cmd_events(int, char **)
             printf(" %d:%u", t, w->event_counts[t]);
     printf("\n");
     print_join_events("");
+    return 0;
+}
+
+// wifi perf [reset]: 時間の内訳（2026-11-22。Wi-Fi を速くするために測る）
+static int cmd_perf(int argc, char **argv)
+{
+    if (argc >= 1 && !strcmp(argv[0], "reset")) {
+        wifi_perf_reset();
+        printf("wifi perf: reset\n");
+        return 0;
+    }
+    const struct wifi_perf *w = wifi_get_perf();
+    const struct sdio_perf *d = sdio_get_perf();
+    double f = (double)timer_freq() / 1e6;      // カウント → マイクロ秒
+    double wall = (double)(timer_count() - w->since) / f;
+#define MS(x) ((double)(x) / f / 1000.0)
+    printf("wifi perf: %.0f ms since reset, SDIO %u MHz\n", wall / 1000.0, sdio_clock_hz() / 1000000);
+    printf("  rx: %llu polls (%llu with frames), %llu frames, %llu bytes to lwIP (%.0f KB/s)\n",
+           (unsigned long long)w->polls, (unsigned long long)w->polls_with_frames,
+           (unsigned long long)wifi_get_info()->rx_frames, (unsigned long long)w->rx_bytes,
+           wall > 0 ? (double)w->rx_bytes / wall * 1e6 / 1024 : 0);
+    printf("      poll %.1f ms, lwIP %.1f ms\n", MS(w->t_poll), MS(w->t_hook));
+    printf("  tx: %llu frames, %llu bytes (%.0f KB/s), %.1f ms\n", (unsigned long long)w->tx_frames,
+           (unsigned long long)w->tx_bytes, wall > 0 ? (double)w->tx_bytes / wall * 1e6 / 1024 : 0, MS(w->t_tx));
+    printf("  sdio: %llu CMD52, %llu CMD53 (%llu bytes)\n", (unsigned long long)d->cmd52,
+           (unsigned long long)d->cmd53, (unsigned long long)d->bytes);
+    printf("      command %.1f ms, wait ready %.1f ms, pio %.1f ms, wait done %.1f ms\n", MS(d->t_cmd),
+           MS(d->t_ready), MS(d->t_pio), MS(d->t_done));
+#undef MS
     return 0;
 }
 
@@ -279,7 +312,7 @@ static const struct {
 } subcommands[] = {
     {"start", cmd_start, true},   {"scan", cmd_scan, true},     {"connect", cmd_connect, true},
     {"disconnect", cmd_disconnect, true}, {"status", cmd_status, false}, {"log", cmd_log, false},
-    {"events", cmd_events, false}, {"irq", cmd_irq, false},     {"iovar", cmd_iovar, false},
+    {"events", cmd_events, false}, {"irq", cmd_irq, false}, {"perf", cmd_perf, false},     {"iovar", cmd_iovar, false},
 };
 
 int cmd_wifi(int argc, char **argv)

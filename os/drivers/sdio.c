@@ -7,6 +7,7 @@
 // EMMC の予備のドライバで動いているとき（sd_emmc_free() が false）は使えない。
 // レジスタの書き方（書いた後に SD クロック 2 周期待つ）とクロックの決め方は os/drivers/sd_emmc.c と同じ。
 
+#include <string.h>
 #include "sdio.h"
 #include "sd.h"
 #include "bcm2837.h"
@@ -70,21 +71,35 @@
 #define CCCR_IEN_FN(n)      (1U << (n))
 #define CCCR_BUS_IF         0x07
 #define CCCR_BUS_WIDTH_4    0x02
+// Bus Speed Select（SDIO 仕様の CCCR 0x13。Linux の SDIO_CCCR_SPEED）: ビット 0 SHS = High Speed に対応、
+// ビット 1 EHS = High Speed にする（SDR25、50MHz まで）
+#define CCCR_SPEED          0x13
+#define CCCR_SPEED_SHS      0x01
+#define CCCR_SPEED_EHS      0x02
 #define FBR_BLKSIZE(fn)     (0x100 * (fn) + 0x10)
 
 #define WL_ON_GPIO          41
 #define CLOCK_ID_HZ         400000
 #define CLOCK_NORMAL_HZ     25000000
+#define CLOCK_HIGH_HZ       50000000
 #define TIMEOUT_CMD_US      100000
 #define TIMEOUT_RESET_US    100000
 #define TIMEOUT_INIT_US     1000000
 
 static uint32_t base_clock;
+static bool want_high_speed = true;  // 2026-11-22: High Speed（50MHz）を試す。失敗したら wifi.c が切ってやり直す
+static uint32_t clock_hz;
+void sdio_set_high_speed(bool on) { want_high_speed = on; }
+uint32_t sdio_clock_hz(void) { return clock_hz; }
 static uint32_t write_gap_us = 10;
 static uint32_t rca;
 static bool ready;
 static uint32_t blksize[8];
 static uint32_t ocr_resp;
+
+static struct sdio_perf perf;
+const struct sdio_perf *sdio_get_perf(void) { return &perf; }
+void sdio_perf_reset(void) { memset(&perf, 0, sizeof perf); }
 
 static void emmc_write(uintptr_t reg, uint32_t value)
 {
@@ -171,6 +186,7 @@ static bool set_clock(uint32_t hz)
         return false;
     emmc_write(EMMC_CONTROL1, c1 | C1_CLK_EN);
     write_gap_us = (2 * 1000000 + actual - 1) / actual;
+    clock_hz = actual;
     return true;
 }
 
@@ -210,13 +226,17 @@ static void gpio_init(void)
 
 bool sdio_rw_direct(bool write, int fn, uint32_t addr, uint8_t in, uint8_t *out)
 {
+    perf.cmd52++;
     if (!ready)
         return false;
     uint32_t arg = (write ? 1U << 31 : 0) | ((uint32_t)fn << 28) | ((addr & 0x1FFFF) << 9) | in;
     if (write && out)
         arg |= 1U << 27;    // RAW: 書いた後の値を読み返す
     uint32_t r;
-    if (!command(CMD_IO_RW_DIRECT, arg, &r) || (r & R5_ERRORS))
+    uint64_t t0 = timer_count();
+    bool ok = command(CMD_IO_RW_DIRECT, arg, &r) && !(r & R5_ERRORS);
+    perf.t_cmd += timer_count() - t0;
+    if (!ok)
         return false;
     if (out)
         *out = (uint8_t)r;
@@ -249,16 +269,23 @@ bool sdio_rw_extended(bool write, int fn, uint32_t addr, bool incr, void *buf, u
     if (block)
         cmd |= TM_BLKCNT_EN | (count > 1 ? TM_MULTI_BLOCK : 0);
 
+    perf.cmd53++;
+    perf.bytes += len;
+    uint64_t t0 = timer_count();
     if (!wait_reg(EMMC_STATUS, SR_DAT_INHIBIT, false, TIMEOUT_CMD_US))
         return false;
     emmc_write(EMMC_BLKSIZECNT, (count << 16) | size);
     uint32_t r;
     if (!command(cmd, arg, &r) || (r & R5_ERRORS))
         goto error;
+    uint64_t t1 = timer_count();
+    perf.t_cmd += t1 - t0;
     uint8_t *p = buf;
     for (uint32_t b = 0; b < count; b++) {
         if (!wait_interrupt(write ? INT_WRITE_RDY : INT_READ_RDY, TIMEOUT_CMD_US))
             goto error;
+        uint64_t t2 = timer_count();
+        perf.t_ready += t2 - t1;
         for (uint32_t i = 0; i < size; i += 4, p += 4) {
             if (write) {
                 mmio_write32(EMMC_DATA, p[0] | (p[1] << 8) | (p[2] << 16) | ((uint32_t)p[3] << 24));
@@ -270,9 +297,12 @@ bool sdio_rw_extended(bool write, int fn, uint32_t addr, bool incr, void *buf, u
                 p[3] = (uint8_t)(w >> 24);
             }
         }
+        t1 = timer_count();
+        perf.t_pio += t1 - t2;
     }
     if (!wait_interrupt(INT_DATA_DONE, TIMEOUT_CMD_US))
         goto error;
+    perf.t_done += timer_count() - t1;
     return true;
 
 error:
@@ -372,8 +402,16 @@ bool sdio_init(void)
         !cmd52_init(true, 0, CCCR_BUS_IF, (bus & ~3) | CCCR_BUS_WIDTH_4, nullptr))
         return fail("bus width");
     emmc_write(EMMC_CONTROL0, mmio_read32(EMMC_CONTROL0) | C0_HCTL_DWIDTH);
-    if (!set_clock(CLOCK_NORMAL_HZ))
-        return fail("set clock 25MHz");
+    // チップが対応していれば High Speed（EHS）にして 50MHz（2026-11-22）。コントローラの High Speed の印
+    // （CONTROL0 の HCTL_HS_EN）は立てない（Linux の sdhci-iproc の bcm2835 は SDHCI_QUIRK_NO_HISPD_BIT）。
+    // 誤りがあれば、wifi.c がファームウェアを読み直して確かめたところで気づき、25MHz でやり直す
+    uint32_t hz = CLOCK_NORMAL_HZ;
+    uint8_t speed;
+    if (want_high_speed && cmd52_init(false, 0, CCCR_SPEED, 0, &speed) && (speed & CCCR_SPEED_SHS) &&
+        cmd52_init(true, 0, CCCR_SPEED, speed | CCCR_SPEED_EHS, nullptr))
+        hz = CLOCK_HIGH_HZ;
+    if (!set_clock(hz))
+        return fail("set clock");
     ready = true;
     return true;
 }

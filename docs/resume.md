@@ -174,10 +174,10 @@ GCC 版の差（今は約 1.5 倍）を縮める。今の位置・測り方（`t
 （`tools/slimcc/cmp_s.sh`・`cmp_o.sh`、make cc-test の GCC と比べる試験）・候補・試して見送ったものは
 `docs/slimcc-codegen.md` にまとめてある。
 
-**Wi-Fi を速くする**（ユーザーの希望、2026-11-21。トークンが戻ったら始める）: 今は同じ LAN で約 1.2MB/s（線の上限は約 12.5MB/s なので、枠ごとの手間で止まっている見込み）。
-順に: 1. 受信の 1 枠ごとの内訳（コマンドの待ち・PIO・lwIP）を測る（SD カードのときと同じ）→ 2. SDIO を 50MHz（High Speed）に →
-3. 枠ごとのコマンドを減らす → 4. 枠をまとめて受ける（glom。今は bus:txglom 0 で切っている）→ 5. DMA・6. TCP の窓の拡大は内訳を見て。
-Wi-Fi だけでつないでいるので、試しの起動（nos.py kernel）で送る。sftp・scp は暗号の計算でも止まっている可能性がある。
+**Wi-Fi を速くする**（2026-11-22 に 1・2 と TCP の窓をした。CLAUDE.md の「Wi-Fi を速くする（2026-11-22）」）: 測り方は
+`python3 tools/perf/wifibench.py recv|send MB`（Monocs で tools/perf/wifibench.c を /root/work に置いて動かす）と `wifi perf`。
+今は受ける 3.6〜5MB/s・送る 2.3〜3MB/s で、転送の間 Monocs は半分〜8 割の時間何もしていない（電波・往復の時間で頭打ち）。
+1 枠あたりのコマンドを減らす・glom・DMA は、Monocs の処理を減らすだけで速さには効かない見込みなので見送り中
 
 つないで使うのを便利にするもの（おすすめの順）:
 

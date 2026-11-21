@@ -3,7 +3,9 @@
 
 #include <stdint.h>
 
-bool sdio_init(void);               // WL_ON でチップをリセットし直し、SDIO の初期化（4 ビット、25MHz）
+bool sdio_init(void);
+void sdio_set_high_speed(bool on);     // 次の sdio_init で High Speed（50MHz）を試すか（既定 true）
+uint32_t sdio_clock_hz(void);           // 今のクロック               // WL_ON でチップをリセットし直し、SDIO の初期化（4 ビット、25MHz）
 const char *sdio_error(void);       // 失敗したところ
 uint32_t sdio_ocr(void);            // CMD5 の応答（機能の数など）
 
@@ -19,3 +21,14 @@ bool sdio_card_irq_setup(void);         // チップの側（CCCR）で、機能
 void sdio_card_irq_signal(bool on);     // コントローラが割り込みを上げるか（EMMC の IRPT_EN の CARD）
 void sdio_card_irq_off(void);            // 割り込みコントローラでも止める（上がり続けるとき）
 bool sdio_card_irq_pending(void);       // 今、チップが割り込みを上げているか（EMMC の INTERRUPT の CARD）
+
+// 時間の内訳（2026-11-22。Wi-Fi を速くするために測る。シェルの wifi perf）。時間は timer_count（CNTPCT）のカウント
+struct sdio_perf {
+    uint64_t cmd52, cmd53, bytes;       // コマンドの数、CMD53 で運んだバイト
+    uint64_t t_cmd;                     // コマンドを出して応答が来るまで（CMD52 も）
+    uint64_t t_ready;                   // データの準備（READ_RDY・WRITE_RDY）を待つ
+    uint64_t t_pio;                     // FIFO との 1 語ずつのやりとり
+    uint64_t t_done;                    // 転送の終わり（DATA_DONE）を待つ
+};
+const struct sdio_perf *sdio_get_perf(void);
+void sdio_perf_reset(void);

@@ -490,7 +490,25 @@ static bool ram_write_verify(uint32_t addr, uint8_t *data, uint32_t size)
     return ok;
 }
 
+static bool start_once(const char *fw_path, const char *nvram_path);
+
+// 2026-11-22: SDIO を High Speed（50MHz）で始め、ファームウェアの書き込みと読み直しがうまくいかなければ、
+// 25MHz で初めからやり直す（info.sdio_fallback に印）
 bool wifi_start(const char *fw_path, const char *nvram_path)
+{
+    if (start_once(fw_path, nvram_path))
+        return true;
+    if (sdio_clock_hz() <= 25000000)
+        return false;
+    const char *why = info.error;
+    sdio_set_high_speed(false);
+    info.found = false;
+    bool ok = start_once(fw_path, nvram_path);
+    info.sdio_fallback = why ? why : "?";
+    return ok;
+}
+
+static bool start_once(const char *fw_path, const char *nvram_path)
 {
     if (!info.found && !wifi_probe())
         return false;
@@ -818,6 +836,11 @@ void wifi_diag_report(void)
 }
 static void (*rx_hook)(const uint8_t *frame, uint32_t len);
 
+// 時間の内訳（2026-11-22。シェルの wifi perf）。時間は timer_count のカウント
+static struct wifi_perf perf;
+const struct wifi_perf *wifi_get_perf(void) { return &perf; }
+void wifi_perf_reset(void) { memset(&perf, 0, sizeof perf); sdio_perf_reset(); perf.since = timer_count(); }
+
 static void handle_frame(uint8_t *f, uint32_t len, uint32_t chan, uint32_t doff)
 {
     if (chan == SDPCM_CONTROL_CHANNEL) {
@@ -854,13 +877,30 @@ static void handle_frame(uint8_t *f, uint32_t len, uint32_t chan, uint32_t doff)
             return;
         uint8_t *d = f + doff;
         uint32_t off = BCDC_HEADER_LEN + d[3] * 4;
-        if (len - doff > off + 14 && rx_hook)
+        if (len - doff > off + 14 && rx_hook) {
+            uint64_t t0 = timer_count();
             rx_hook(d + off, len - doff - off);
+            perf.t_hook += timer_count() - t0;
+            perf.rx_bytes += len - doff - off;
+        }
     }
 }
 
 // チップから届いている枠をすべて読む（SDIO のコアの intstatus を見て）
+static void poll_rx_body(void);
+
 static void poll_rx(void)
+{
+    uint64_t t0 = timer_count(), h0 = perf.t_hook;
+    uint64_t f0 = info.rx_frames;
+    poll_rx_body();
+    perf.polls++;
+    if (info.rx_frames != f0)
+        perf.polls_with_frames++;
+    perf.t_poll += timer_count() - t0 - (perf.t_hook - h0);
+}
+
+static void poll_rx_body(void)
 {
     diag_polls++;
     uint32_t st = rd(sdio_core + SD_INTSTATUS);
@@ -936,8 +976,13 @@ static bool send_frame(uint32_t chan, const uint8_t *data, uint32_t len, bool wa
     txbuf[3] = (uint8_t)(~total >> 8);
     put32(txbuf + 4, tx_seq | (chan << 8) | ((uint32_t)SDPCM_HDRLEN << 24));
     memcpy(txbuf + SDPCM_HDRLEN, data, len);
-    if (!f2_rw(true, txbuf, padded))
+    uint64_t t0 = timer_count();
+    bool ok = f2_rw(true, txbuf, padded);
+    perf.t_tx += timer_count() - t0;
+    if (!ok)
         return false;
+    perf.tx_frames++;
+    perf.tx_bytes += len;
     tx_seq++;
     return true;
 }

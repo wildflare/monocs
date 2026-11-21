@@ -98,6 +98,11 @@ uint64_t timer_ticks(void)
     return ticks;
 }
 
+uint64_t timer_count(void)
+{
+    return read_sysreg(cntpct_el0);
+}
+
 uint64_t timer_freq(void)
 {
     return read_sysreg(cntfrq_el0);

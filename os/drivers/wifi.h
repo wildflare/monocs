@@ -8,6 +8,7 @@ struct wifi_info {
     bool found;
     const char *error;      // 見つからなかったときの理由
     uint32_t ocr;           // SDIO の CMD5 の応答
+    const char *sdio_fallback;  // High Speed（50MHz）で始められず 25MHz にしたときの理由（なければ NULL）
     uint32_t chipid_reg;    // ChipCommon の chipid レジスタ
     uint32_t chip, rev;     // チップの番号（43430 など）と版
     uint64_t probe_us;
@@ -92,3 +93,14 @@ bool wifi_set_irq_mode(bool on);
 // 受信が途切れた・送ってよい番号を待ったことを dmesg に書く（調べる用。割り込みの中では書かず、wifid のコア 3 から呼ぶ）
 void wifi_diag_report(void);    // 受信を割り込みで読むか（false なら 10ms ごとのタイマーだけ）
 void wifi_handle_irq(void); // EMMC の割り込みから（チップが、読むものがあると知らせた）
+
+// 時間の内訳（2026-11-22。シェルの wifi perf）。時間は timer_count（CNTPCT）のカウント
+struct wifi_perf {
+    uint64_t since;                     // 数え始めた時刻
+    uint64_t polls, polls_with_frames;  // チップを読みに行った回数、そのうち枠があった回数
+    uint64_t t_poll;                    // 読みに行った時間（lwIP に渡した分を除く）
+    uint64_t t_hook, rx_bytes;          // lwIP に渡した時間、渡した Ethernet のバイト
+    uint64_t t_tx, tx_frames, tx_bytes; // 送った時間・枠・バイト
+};
+const struct wifi_perf *wifi_get_perf(void);
+void wifi_perf_reset(void);

@@ -66,7 +66,7 @@ HTTPS は `-ltls` の `monocs_tls_connect` など。例: `/usr/share/samples/htt
 | 経路 | 速さ |
 |---|---|
 | USB イーサネット | 約 15MB/s |
-| Wi-Fi（同じ LAN） | 約 1.2MB/s。sftp で約 2〜3MB/s |
+| Wi-Fi（同じ LAN、TCP） | 受ける 3.6〜5MB/s、送る 2.3〜3MB/s（電波の具合で揺れる。`tools/perf/wifibench.py`）。sftp は暗号の計算もあって 2〜3MB/s |
 | Wi-Fi の ping | 約 5ms |
 
 ## 8.7 わかっているクセ
