@@ -1,0 +1,116 @@
+FROM debian:13-slim AS install-deps
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+ gcc-14 \
+ file binutils libc-dev libgcc-14-dev \
+ make cmake pkg-config ninja-build \
+ zip lzip xz-utils bzip2 zlib1g-dev unzip \
+ autoconf autoconf-archive autopoint automake gettext texinfo \
+ git curl ca-certificates wget locales \
+ tcl-dev bison flex re2c libpcre2-dev \
+ libcurl4-openssl-dev libssl-dev libexpat1-dev libicu-dev \
+ libncurses-dev libreadline-dev libpsl-dev libffi-dev libxml2-dev libsqlite3-dev \
+ # build_gcc
+ libgmp-dev libmpfr-dev libmpc-dev \
+ # test_toxcore
+ libsodium-dev \
+ # test_perl:cpan/Socket/t/getaddrinfo.t
+ netbase \
+ # for ocaml testsuite
+ parallel \
+ # memcached
+ libevent-dev \
+ # libxml
+ python3-dev \
+ # pacman
+ libarchive-dev fakeroot fakechroot gawk \
+ # libarchive
+ libbz2-dev liblzma-dev \
+ # jq
+ libonig-dev \
+ # pixman, freetype
+ libpng-dev \
+ # yash
+ ed \
+ # ruby
+ ruby ruby-psych libyaml-dev \
+ # samba
+ libgnutls28-dev libparse-yapp-perl libacl1-dev libpam0g-dev python3-cryptography python3-pyasn1 python3-iso8601 \
+ # libpsl
+ libunistring-dev \
+ # binutils
+ dejagnu libzstd-dev \
+ # lwan
+ python3-requests libsqlite3-dev libmariadb-dev \
+ # rsync
+ python3-commonmark \
+ # got
+ uuid-dev libbsd-dev libtls-dev \
+ # openrc
+ libcap-dev \
+ # hare simple-cc
+ qbe \
+ # neovim
+ luajit libluajit-5.1-dev lua-luv-dev libvterm-dev lua-lpeg libmsgpack-c-dev libtree-sitter-dev libunibilium-dev \
+ # njs
+ libxslt-dev \
+ # tcpdump
+ libpcap-dev \
+ # hoedown
+ tidy \
+ # cmp
+ libcmocka-dev \
+ # libjsonc
+ xxd \
+ # packcc
+ bats \
+ # minmea
+ check \
+ # rc
+ byacc \
+ # qman
+ python3-cogapp libcunit1-dev \
+ # fribidi
+ help2man \
+ # bcgh
+ bc \
+ # kcgi
+ bmake \
+ # ldns
+ dnsutils \
+ # squashfuse
+ libfuse-dev squashfs-tools \
+ # pngquant
+ libpng-dev liblcms2-dev \
+ # ooc
+ libgc-dev \
+ && apt-get clean
+
+FROM install-deps AS setup-toolchain
+
+COPY . /work/slimcc
+WORKDIR /work/slimcc
+
+RUN ln -s platform/linux-ci-debian13.c platform.c \
+ && gcc-14 -O3 -flto=auto -fvisibility=hidden -march=x86-64-v3 -mtune=znver3 -fsanitize=address,undefined -fno-sanitize=alignment -fno-sanitize-recover=undefined scripts/amalgamation.c -DCHECK_MEMUSE -o slimcc
+RUN apt-get -y autoremove gcc-14 && rm -rf /var/cache/apt/*
+
+RUN ! command -v cc
+RUN ! command -v cpp
+RUN ! command -v gcc
+RUN ! command -v gcc-14
+
+ENV CC=/work/slimcc/slimcc
+ENV TERM=xterm
+
+RUN localedef -i en_US -c -f UTF-8 -A /usr/share/locale/locale.alias en_US.UTF-8
+ENV LANG=en_US.UTF-8
+
+RUN bash scripts/linux_thirdparty.bash ci_libtool_muon
+
+RUN useradd -m non-root -s /bin/bash && \
+ su non-root -c "git config --global advice.detachedHead false" && \
+ su non-root -c "git config --global init.defaultBranch init" && \
+ su non-root -c "git config --global --add safe.directory '*'"
+
+WORKDIR /home/non-root

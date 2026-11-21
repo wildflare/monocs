@@ -1,0 +1,6 @@
+target: qjs
+flag: -D_GNU_SOURCE
+flag: -DCONFIG_VERSION="2026-06-04"
+src: DIR/qjs.c
+src: DIR/core.c
+src: DIR/libm/util.c

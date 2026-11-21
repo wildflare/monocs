@@ -1,0 +1,257 @@
+// OS API の関数表に載せるシンボル（アプリから呼べるもの）
+// API(名前)      : ヘッダーで宣言されている関数・変数
+// API_EXT(名前)  : ヘッダーにない関数（libgcc の補助関数など）
+// API_AS(名前, 実体) : アプリから見える名前と、カーネル側の関数が異なるもの
+// API_TLS(名前)  : _Thread_local の変数（アプリからは TP からのオフセットで参照する。run.c の resolve）
+
+// stdio.h
+API(stdin) API(stdout) API(stderr)
+API(printf) API(fprintf) API(sprintf) API(snprintf)
+API(vprintf) API(vfprintf) API(vsprintf) API(vsnprintf)
+API(scanf) API(fscanf) API(sscanf) API(vscanf) API(vfscanf) API(vsscanf)
+API(puts) API(fputs) API(putchar) API(fputc) API(putc)
+API(getchar) API(fgetc) API(getc) API(fgets) API(ungetc)
+API(fopen) API(fdopen) API(freopen) API(fclose) API(fread) API(fwrite) API_AS(fflush, app_fflush)
+API(fseek) API(ftell) API(rewind) API(fgetpos) API(fsetpos)
+API(feof) API(ferror) API(clearerr) API(fileno)
+API(remove) API(rename) API(perror) API(setvbuf) API(setbuf)
+
+// stdlib.h
+API(malloc) API(calloc) API(realloc) API(free)
+API(atoi) API(atol) API(atoll) API(atof)
+API(strtol) API(strtoul) API(strtoll) API(strtoull) API(strtod) API(strtold) API(strtof)
+API(abs) API(labs) API(llabs) API(div) API(ldiv) API(lldiv)
+API(qsort) API(bsearch) API(rand) API(srand)
+API_AS(system, shell_system) API_AS(exit, app_exit_with_handlers) API(_Exit) API(abort) API_AS(atexit, app_atexit) API(getenv)
+
+// string.h
+API(memcpy) API(memmove) API(memset) API(memcmp) API(memchr)
+API(strlen) API(strnlen) API(strcpy) API(strncpy) API(strcat) API(strncat)
+API(strcmp) API(strncmp) API(strcasecmp) API(strncasecmp)
+API(strchr) API(strrchr) API(strstr) API(strtok) API(strtok_r)
+API(strdup) API(strndup) API(strerror) API(strspn) API(strcspn) API(strpbrk)
+
+// ctype.h
+API(isalnum) API(isalpha) API(isblank) API(iscntrl) API(isdigit) API(isgraph)
+API(islower) API(isprint) API(ispunct) API(isspace) API(isupper) API(isxdigit)
+API(tolower) API(toupper)
+API(_ctype_b)    // ctype.h のマクロ（isalpha など）が参照する表
+
+// math.h
+API(sin) API(cos) API(tan) API(asin) API(acos) API(atan) API(atan2)
+API(sinh) API(cosh) API(tanh) API(exp) API(exp2) API(log) API(log10) API(log2)
+API(pow) API(sqrt) API(cbrt) API(hypot) API(ceil) API(floor) API(round) API(trunc)
+API(fabs) API(fmod) API(fmin) API(fmax) API(ldexp) API(frexp) API(modf)
+API(sinf) API(cosf) API(tanf) API(atan2f) API(expf) API(logf) API(powf) API(sqrtf)
+API(floorf) API(ceilf) API(fabsf) API(fmodf) API(roundf)
+API(asinh) API(acosh) API(atanh) API(expm1) API(log1p) API(logb) API(ilogb)
+API(scalbn) API(scalbln) API(nextafter) API(remainder) API(remquo) API(copysign) API(nan)
+API(nearbyint) API(rint) API(lrint) API(llrint) API(lround) API(llround) API(fdim) API(fma)
+API(erf) API(erfc) API(tgamma) API(lgamma)
+API(asinf) API(acosf) API(atanf) API(sinhf) API(coshf) API(tanhf) API(exp2f) API(log10f)
+API(log2f) API(cbrtf) API(hypotf) API(truncf) API(fminf) API(fmaxf) API(ldexpf) API(frexpf)
+API(modff) API(copysignf)
+API(sqrtl) API(fabsl) API(sinl) API(cosl) API(tanl) API(expl) API(logl) API(powl) API(floorl)
+API(ceill) API(fmodl) API(ldexpl) API(frexpl) API(truncl) API(roundl)
+// isnan・isinf・isfinite・fpclassify・issignaling のマクロが呼ぶ関数
+API(__isnanf) API(__isnand) API(__isnanl) API(__isinff) API(__isinfd) API(__isinfl)
+API(__finitef) API(__finite) API(__finitel)
+API(__fpclassifyf) API(__fpclassifyd) API(__fpclassifyl) API(__signbitf) API(__signbitd)
+API(__issignalingf) API(__issignaling) API(__issignalingl)
+
+// time.h、sys/time.h
+API(time) API(clock) API(difftime) API_AS(localtime, app_localtime) API_AS(gmtime, app_gmtime) API_AS(mktime, app_mktime)
+API(strftime) API(gettimeofday) API_AS(localtime_r, app_localtime_r) API_AS(gmtime_r, app_gmtime_r)
+
+// unistd.h、fcntl.h、sys/stat.h、dirent.h（VFS）
+API(open) API(close) API(read) API(write) API(lseek) API(unlink) API(rmdir)
+API(mkdir) API(chdir) API(getcwd) API(stat) API(fstat) API(isatty)
+API(opendir) API(readdir) API(closedir)
+
+// POSIX（os/libc/posix.c。Monocs にプロセスはないので getpid・kill・popen は形だけ）、locale.h、wchar.h
+API(access) API(lstat) API(realpath) API(utime) API(statvfs) API(clock_gettime) API(clock_settime) API(settimeofday) API(nanosleep) API(getentropy)
+API(getpid) API(kill) API(popen) API(pclose)
+// シグナル（os/libc/signal.c）。sigemptyset などは signal.h のインライン関数
+API(signal) API(sigaction) API(raise) API(sigprocmask) API(sigpending) API(sigsuspend) API(pause) API(psignal)
+API(getline) API(getdelim) API_AS(setlocale, app_setlocale) API(wcwidth)
+API(strcasestr) API(basename) API(dirname)  // picolibc（string.h の GNU、libgen.h）
+// マルチバイト文字（UTF-8。os/libc/mbchar.c）。MB_CUR_MAX は __locale_mb_cur_max() を呼ぶマクロ
+API(mbrtowc) API(mbrlen) API(mbtowc) API(mblen) API(wcrtomb) API(wctomb) API(mbstowcs) API(wcstombs) API(mbsinit)
+API(__locale_mb_cur_max)
+
+// Linux のプログラムがよく使う関数（2026-11-14）。picolibc のもの（宣言がヘッダーの規格の条件で隠れるものは
+// API_EXT）と、Monocs のもの（環境変数: os/libc/env.c、usleep: posix.c、glob: os/libc/glob.c）
+API(getopt) API_EXT(getopt_long) API_EXT(getopt_long_only) API(optarg) API(optind) API(opterr) API(optopt)
+API_AS(setenv, app_setenv) API_AS(unsetenv, app_unsetenv) API_AS(putenv, app_putenv)
+API(sleep) API(usleep)
+API(strsep) API(stpcpy) API(stpncpy) API(strlcpy) API(strlcat) API_EXT(memmem) API_EXT(memrchr)
+API_EXT(strchrnul) API_EXT(strverscmp) API(strsignal) API(explicit_bzero) API(bzero) API(bcopy)
+API(index) API(rindex) API(ffs)
+API_AS(strerror_r, gnu_strerror_r) API_EXT(__xpg_strerror_r)    // GNU 版と POSIX 版（ヘッダーが _GNU_SOURCE で選ぶ）
+API(asprintf) API(vasprintf) API(dprintf) API(vdprintf) API(open_memstream) API(fmemopen)
+API_AS(qsort_r, gnu_qsort_r) API_EXT(__bsd_qsort_r)            // GNU 版と BSD 版（ヘッダーが _GNU_SOURCE で選ぶ）
+API(reallocarray) API(getsubopt) API(mkstemp) API(tmpnam) API(tmpfile) API(localeconv) API(strcoll) API(strxfrm)
+API(flockfile) API(funlockfile) API(ftrylockfile) API(getc_unlocked) API(putc_unlocked) API(getchar_unlocked) API(putchar_unlocked) API(fseeko) API(ftello)   // POSIX（Lua の LUA_USE_POSIX）
+API(random) API(srandom) API(rand_r) API(drand48) API(srand48) API(lrand48)
+API(ctime) API(ctime_r) API(asctime) API(asctime_r) API_AS(timegm, app_timegm) API_EXT(strptime) API(tzset)
+API_EXT(fnmatch) API_EXT(glob) API_EXT(globfree)
+API_EXT(regcomp) API_EXT(regexec) API_EXT(regerror) API_EXT(regfree)
+// ワイド文字（wchar.h・wctype.h）
+API(wcslen) API(wcsnlen) API(wcscpy) API(wcsncpy) API(wcscat) API(wcsncat) API(wcscmp)
+API(wcsncmp) API(wcscasecmp) API(wcsncasecmp) API(wcscoll) API(wcsxfrm) API(wcschr)
+API(wcsrchr) API(wcsstr) API(wcspbrk) API(wcsspn) API(wcscspn) API(wcstok) API(wcsdup)
+API(wcslcpy) API(wcslcat) API_EXT(wcswidth) API(wcsftime) API(wcsrtombs) API(wcsnrtombs)
+API(wcstol) API(wcstoul) API(wcstoll) API(wcstoull) API(wcstod) API(wcstof) API(wcstold)
+API(wcstoimax) API(wcstoumax)
+API(wmemcpy) API(wmemmove) API(wmemset) API(wmemcmp) API(wmemchr) API_EXT(wmempcpy)
+API(btowc) API(wctob) API(swprintf) API(vswprintf) API(swscanf)
+API(fgetwc) API(fgetws) API(fputwc) API(fputws) API(getwc) API(getwchar) API(putwc)
+API(putwchar) API(ungetwc)
+API_EXT(iswalnum) API_EXT(iswalpha) API_EXT(iswblank) API_EXT(iswcntrl) API_EXT(iswdigit) API_EXT(iswgraph)
+API_EXT(iswlower) API_EXT(iswprint) API_EXT(iswpunct) API_EXT(iswspace) API_EXT(iswupper) API_EXT(iswxdigit)
+API_EXT(iswctype) API_EXT(wctype) API_EXT(towlower) API_EXT(towupper) API_EXT(towctrans) API_EXT(wctrans)
+
+// ソケット（os/libc/socket.c）、名前とアドレス（netdb.c）、select・poll（select.c）、alarm（signal.c）、fcntl（vfs.c）
+API_EXT(socket) API_EXT(bind) API_EXT(listen) API_EXT(accept) API_EXT(accept4) API_EXT(connect)
+API_EXT(send) API_EXT(recv) API_EXT(sendto) API_EXT(recvfrom) API_EXT(shutdown)
+API_EXT(getsockname) API_EXT(getpeername) API_EXT(setsockopt) API_EXT(getsockopt)
+API_EXT(getaddrinfo) API_EXT(freeaddrinfo) API_EXT(gai_strerror) API_EXT(getnameinfo) API_EXT(gethostbyname)
+API_EXT(getservbyname) API_EXT(getservbyport) API_EXT(hstrerror) API_EXT(h_errno)
+API_EXT(inet_pton) API_EXT(inet_ntop) API_EXT(inet_aton) API_EXT(inet_addr) API_EXT(inet_ntoa)
+API(gethostname) API(select) API_EXT(pselect) API_EXT(poll) API(alarm) API(fcntl)
+
+// sys/resource.h・dlfcn.h（os/libc/posix.c。2026-11-20。SQLite）
+API_EXT(getrusage) API_EXT(getrlimit) API_EXT(setrlimit) API_EXT(dlopen) API_EXT(dlsym) API_EXT(dlclose) API_EXT(dlerror)
+// SQLite の unix の VFS などが使うもの（2026-11-20）: ファイル（os/fs/vfs.c）、リンク・日時・ユーザー（os/libc/posix.c）、
+// mmap（os/libc/mman.c）
+API(ftruncate) API(truncate) API(fsync) API(fdatasync) API(chmod) API(fchmod) API(chown)
+API(fchown) API(readlink) API(symlink) API(link) API(utimes) API(getuid) API(geteuid)
+API(getgid) API(getegid) API(setuid) API(setgid) API_EXT(malloc_usable_size) API_EXT(getpwuid) API_EXT(getpwnam)
+API_EXT(mmap) API_EXT(munmap) API_EXT(msync) API_EXT(mprotect) API_EXT(madvise) API_EXT(posix_madvise)
+// termcap.h（os/libc/termcap.c。2026-11-20、vim）
+API_EXT(tgetent) API_EXT(tgetflag) API_EXT(tgetnum) API_EXT(tgetstr) API_EXT(tgoto) API_EXT(tputs) API_EXT(tparm)
+API_EXT(tiparm) API_EXT(PC) API_EXT(UP) API_EXT(BC) API_EXT(ospeed)
+// プロセス（いつも失敗。os/libc/posix.c）、umask・グループ・setitimer（os/libc/signal.c）、environ（2026-11-20、vim）
+API(fork) API(vfork) API(execv) API(execvp) API(execve) API(pipe) API_EXT(pipe2) API(dup) API(dup2)
+API_EXT(wait) API_EXT(waitpid) API(umask) API_EXT(getgrgid) API_EXT(getgrnam) API(setitimer) API(getitimer)
+API_EXT(environ) API_AS(_exit, _Exit)
+
+// termios.h、sys/ioctl.h（os/libc/termios.c。端末の設定。Linux と同じく、既定は 1 行ずつ・エコーあり）
+API(tcgetattr) API(tcsetattr) API(tcdrain) API(tcflush) API(tcflow) API(tcsendbreak) API(tcgetsid)
+API(tcgetwinsize) API(tcsetwinsize) API(cfgetispeed) API(cfgetospeed) API(cfsetispeed) API(cfsetospeed)
+API(ioctl)
+
+// curses.h（os/curses/curses.c。ncurses 互換の小さなもの）
+API(stdscr) API(curscr) API(LINES) API(COLS) API(COLORS) API(COLOR_PAIRS) API(ESCDELAY)
+API(initscr) API(endwin) API(isendwin) API(def_prog_mode) API(reset_prog_mode) API(raw) API(noraw) API(cbreak) API(nocbreak) API(echo)
+API(noecho) API(nl) API(nonl) API(keypad) API(meta) API(intrflush) API(nodelay) API(wtimeout)
+API(notimeout) API(leaveok) API(scrollok) API(idlok) API(clearok) API(curs_set) API(set_escdelay)
+API(napms) API(beep) API(flash) API(has_colors) API(can_change_color) API(start_color)
+API(use_default_colors) API(assume_default_colors) API(init_pair) API(pair_content) API(wrefresh)
+API(wnoutrefresh) API(doupdate) API(redrawwin) API(wmove) API(waddch) API(waddnstr) API(waddstr)
+API(wprintw) API(vw_printw) API(printw) API(mvprintw) API(mvwprintw) API(wclrtoeol) API(wclrtobot)
+API(werase) API(wclear) API(whline) API(wvline) API(wattron) API(wattroff) API(wattrset)
+API(wattr_on) API(wattr_off) API(wattr_get) API(wattr_set) API(wcolor_set) API(wbkgdset) API(winch)
+API(getcurx) API(getcury) API(getmaxx) API(getmaxy) API(getbegx) API(getbegy) API(wgetch)
+API(wget_wch) API(ungetch) API(flushinp) API(define_key) API(key_defined) API(keyname) API(has_key)
+API(mousemask) API(mouseinterval) API(getmouse) API(ungetmouse) API(has_mouse) API(resizeterm)
+API(resize_term) API(is_term_resized)
+
+// setjmp.h、errno.h、assert.h
+API(setjmp) API(longjmp)
+API_TLS(errno)                          // コアごと（_Thread_local）
+API(__assert_func)
+
+// Monocs 独自（monocs.h）
+API(timer_ticks) API(timer_now_us) API(timer_delay_us)
+API(uart_putc) API(uart_getc) API(uart_has_input)
+API_AS(led_set, led_set_manual)     // OS の点滅を止めてから点灯・消灯する
+API_AS(monocs_cores, smp_cores)          // 使えるコアの数（コア 0 を含む）
+// スレッド（os/libc/pthread.c。スレッド 1 つに空いたコアを 1 つ。os/api/include/pthread.h）
+API(pthread_create) API(pthread_join) API(pthread_detach) API(pthread_exit) API(pthread_self) API(pthread_equal)
+API(pthread_cancel) API(pthread_setcancelstate) API(pthread_setcanceltype) API(pthread_testcancel)
+API(pthread_setname_np) API(pthread_getname_np) API(pthread_kill) API(pthread_sigmask)
+API(pthread_attr_init) API(pthread_attr_destroy) API(pthread_attr_setdetachstate) API(pthread_attr_getdetachstate)
+API(pthread_attr_setstacksize) API(pthread_attr_getstacksize)
+API(pthread_mutexattr_init) API(pthread_mutexattr_destroy) API(pthread_mutexattr_settype)
+API(pthread_mutexattr_gettype) API(pthread_mutexattr_setpshared)
+API(pthread_mutex_init) API(pthread_mutex_destroy) API(pthread_mutex_lock) API(pthread_mutex_trylock)
+API(pthread_mutex_timedlock) API(pthread_mutex_unlock)
+API(pthread_condattr_init) API(pthread_condattr_destroy) API(pthread_condattr_setclock) API(pthread_condattr_setpshared)
+API(pthread_cond_init) API(pthread_cond_destroy) API(pthread_cond_wait) API(pthread_cond_timedwait)
+API(pthread_cond_signal) API(pthread_cond_broadcast)
+API(pthread_once) API(pthread_key_create) API(pthread_key_delete) API(pthread_getspecific) API(pthread_setspecific)
+API(pthread_rwlock_init) API(pthread_rwlock_destroy) API(pthread_rwlock_rdlock) API(pthread_rwlock_tryrdlock)
+API(pthread_rwlock_wrlock) API(pthread_rwlock_trywrlock) API(pthread_rwlock_unlock)
+API(pthread_barrier_init) API(pthread_barrier_destroy) API(pthread_barrier_wait)
+API(pthread_spin_init) API(pthread_spin_destroy) API(pthread_spin_lock) API(pthread_spin_trylock) API(pthread_spin_unlock)
+API(sched_yield) API(sysconf)
+// OpenMP（os/libc/omp.c。-fopenmp でコンパイルしたコードが呼ぶ __monocs_omp_* と、omp.h の関数）
+API(__monocs_omp_parallel) API(__monocs_omp_trip) API(__monocs_omp_loop_init) API(__monocs_omp_loop_next)
+API(__monocs_omp_loop_end) API(__monocs_omp_barrier) API(__monocs_omp_single) API(__monocs_omp_lock) API(__monocs_omp_unlock)
+API(__monocs_omp_flush)
+API(omp_get_thread_num) API(omp_get_num_threads) API(omp_get_max_threads) API(omp_set_num_threads)
+API(omp_get_num_procs) API(omp_in_parallel) API(omp_get_level) API(omp_get_dynamic) API(omp_set_dynamic)
+API(omp_get_nested) API(omp_set_nested) API(omp_get_wtime) API(omp_get_wtick)
+API(omp_init_lock) API(omp_destroy_lock) API(omp_set_lock) API(omp_unset_lock) API(omp_test_lock)
+API(omp_init_nest_lock) API(omp_destroy_nest_lock) API(omp_set_nest_lock) API(omp_unset_nest_lock)
+API(omp_test_nest_lock)
+API_AS(monocs_core_start, smp_run)       // コア 1〜3 で関数を動かす
+API_AS(monocs_core_wait, smp_wait)       // その関数が終わるのを待つ
+API_AS(monocs_mutex_lock, app_mutex_lock)   // コア間のロック（os/kernel/lock.c）
+API_AS(monocs_mutex_unlock, app_mutex_unlock)
+API_AS(monocs_cc, slimcc_cmd_app)    // ファイルをコンパイルして .o を書く（シェルの slimcc と同じ）
+API_AS(monocs_ld, slimld_cmd_app)    // カーネルをリンクする（シェルの slimld と同じ）
+API_AS(monocs_term_size, term_size)  // 端末の画面の大きさ（os/kernel/term.c）
+API_AS(monocs_term_cols, term_cols)  // 端末の桁数（覚えている値。ls など）
+API_AS(monocs_tcp_listen, tcp_api_listen)    // TCP（os/net/tcp_api.c）
+API_AS(monocs_tcp_listen_addr, tcp_api_listen_addr)
+API_AS(monocs_tcp_accept, tcp_api_accept)
+API_AS(monocs_tcp_connect, tcp_api_connect)
+API_AS(monocs_tcp_send, tcp_api_send)
+API_AS(monocs_tcp_recv, tcp_api_recv)
+API_AS(monocs_tcp_close, tcp_api_close)
+API_AS(monocs_tcp_netif, tcp_api_netif)      // 受け付けた接続が届いた口（USB か Wi-Fi か）
+API_AS(monocs_tcp_peer, tcp_api_peer)        // 相手のアドレスとポート
+API_AS(monocs_udp_open, udp_api_open)        // UDP（os/net/udp_api.c）
+API_AS(monocs_udp_sendto, udp_api_sendto)
+API_AS(monocs_udp_recvfrom, udp_api_recvfrom)
+API_AS(monocs_udp_close, udp_api_close)
+API_AS(monocs_resolve, dns_api_resolve)      // 名前から IP アドレス（os/net/dns_api.c）
+API_AS(monocs_wifi_auto_poll, wifi_auto_poll)    // 内蔵 Wi-Fi の自動の接続を少し進める（services/wifid.c。os/drivers/wifi_auto.c）
+API_AS(monocs_set_timezone, clock_set_tz)    // タイムゾーン（UTC からの分。os/kernel/clock.c）
+API_AS(monocs_clock_known, clock_known)      // 日時が設定されたか
+API_AS(monocs_disk_read, vfs_raw_read)       // SD カードを直接読み書きする（os/fs/vfs.c）
+API_AS(monocs_disk_write, vfs_raw_write)
+API_AS(monocs_disk_sync, vfs_sync)
+API_AS(monocs_disk_discard, vfs_discard)
+API_AS(monocs_reboot, system_reboot)         // 再起動する（os/shell/shell.c）
+API_AS(monocs_console_open, contap_open)     // コンソールの写し（os/kernel/contap.c）
+API_AS(monocs_console_close, contap_close)
+API_AS(monocs_console_read, contap_read)
+API_AS(monocs_console_input, contap_input)
+API_AS(monocs_console_set_size, contap_set_size)
+API_AS(monocs_console_hangup, contap_hangup)  // シェルで exit が打たれた（接続を閉じる）
+API_AS(monocs_console_remote, contap_active)  // telnet・ssh でつないでいるか（httpd の /.status）
+API_AS(monocs_app_running, app_is_running)    // コア 0 でアプリが動いているか（httpd の /.status）
+API_AS(monocs_shell_status, shell_last_status) // シェルが最後に動かした行の終了の値（httpd の /.status）
+API_AS(monocs_klog_read, klog_read)           // カーネルの記録（dmesg。httpd の /.log。os/kernel/klog.c）
+API_AS(monocs_sysstat, sysstat_get)           // システムの様子（/bin/top。os/kernel/sysstat.c）
+API_AS(monocs_rexec_start, rexec_start)       // シェルの 1 行を頼む（sshd の exec。os/kernel/rexec.c）
+API_AS(monocs_rexec_read, rexec_read)
+API_AS(monocs_rexec_write, rexec_write)
+API_AS(monocs_rexec_write_eof, rexec_write_eof)
+API_AS(monocs_rexec_status, rexec_status)
+API_AS(monocs_rexec_release, rexec_release)
+API_AS(monocs_rexec_queued, rexec_queued)
+API_AS(monocs_console_interrupt, uart_raise_interrupt)   // コンソールのアプリを止める（Ctrl-\ と同じ）
+API_AS(monocs_core0_where, core0_where)   // コア 0 が最後の割り込みのときにいた番地（止まったときの調べ）
+API(monocs_fat_attr)          // FAT の属性（読み出し専用・隠し・システム・アーカイブ）を変える・読む
+API(monocs_dirent_hidden)     // readdir が最後に返したものが FAT の隠しファイルか（os/libc/dirent.c）
+
+// コンパイラ（slimcc-a64）が生成するコードから呼ばれる補助関数（long double = 128 ビット浮動小数点の演算）
+API_EXT(__addtf3) API_EXT(__subtf3) API_EXT(__multf3) API_EXT(__divtf3)
+API_EXT(__extenddftf2) API_EXT(__extendsftf2) API_EXT(__trunctfdf2) API_EXT(__trunctfsf2)
+API_EXT(__fixtfsi) API_EXT(__fixtfdi) API_EXT(__fixunstfsi) API_EXT(__fixunstfdi)
+API_EXT(__floatsitf) API_EXT(__floatditf) API_EXT(__floatunsitf) API_EXT(__floatunditf)
+API_EXT(__eqtf2) API_EXT(__netf2) API_EXT(__lttf2) API_EXT(__letf2) API_EXT(__gttf2) API_EXT(__getf2)

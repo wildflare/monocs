@@ -1,0 +1,17 @@
+**/*~
+**/\#*
+**/*.o
+**/*.s
+**/a.out
+/test/*.exe
+/slimcc
+/slimcc-stage2
+/slimcc-asan
+/slimcc-filc
+/slimcc-lto*
+/slimcc-jit
+/slimcc-jit-monocs
+/slimcc-monocs
+/slimld
+/slimcc-bench2
+slimcc-san

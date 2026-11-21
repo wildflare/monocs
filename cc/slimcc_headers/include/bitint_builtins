@@ -1,0 +1,456 @@
+typedef union {
+  unsigned long long as64;
+  unsigned as32;
+  unsigned char as8;
+} __slimcc_bitbuf;
+
+static int __slimcc_bitint_first_set(int bits, __slimcc_bitbuf *op) {
+  int idx = (bits - 1) / 64;
+
+  int clr_shft = 63 - (bits - 1) % 64;
+  (&op->as64)[idx] = ((&op->as64)[idx] << clr_shft) >> clr_shft;
+
+  for (; idx >= 0; idx--)
+    if ((&op->as64)[idx])
+      for (int shft = 0; shft < 64; shft++)
+        if (0 > (long long)((&op->as64)[idx] << shft))
+          return (64 - shft) + idx * 64;
+  return 0;
+}
+
+static _Bool __slimcc_bitint_overflow(int bits, __slimcc_bitbuf *src, int chk_bits, _Bool is_unsigned) {
+  int idx = (chk_bits - 1) / 64;
+  int shft = (chk_bits - 1) % 64;
+
+  long long chk = (long long)(&src->as64)[idx++] >> shft;
+  if (chk != 0)
+    if (is_unsigned || chk != -1)
+      return 1;
+
+  int top = (bits - 1) / 64;
+  while (idx <= top)
+    if ((&src->as64)[idx++] != chk)
+      return 1;
+
+  return 0;
+}
+
+static _Bool __slimcc_bitint_to_bool(int bits, __slimcc_bitbuf *op) {
+  int idx = (bits - 1) / 64;
+
+  int clr_shft = 63 - (bits - 1) % 64;
+  (&op->as64)[idx] = ((&op->as64)[idx] << clr_shft) >> clr_shft;
+
+  while (idx >= 0)
+    if ((&op->as64)[idx--])
+      return 1;
+  return 0;
+}
+
+static int __slimcc_bitint_cmp(int bits, __slimcc_bitbuf *lh, __slimcc_bitbuf *rh, _Bool is_unsigned) {
+  int idx = (bits - 1) / 64;
+
+  int clr_shft = 63 - (bits - 1) % 64;
+  unsigned long long signbit = is_unsigned ? 0 : 1ULL << 63;
+  unsigned long long lv = ((&lh->as64)[idx] << clr_shft) + signbit;
+  unsigned long long rv = ((&rh->as64)[idx] << clr_shft) + signbit;
+
+  for (;;) {
+    if (lv > rv)
+      return 2;
+    else if (lv < rv)
+      return 1;
+
+    if (--idx < 0)
+      break;
+    lv = (&lh->as64)[idx];
+    rv = (&rh->as64)[idx];
+  }
+  return 0;
+}
+
+static void __slimcc_bitint_sign_ext(int bits, __slimcc_bitbuf *op, int bits2, _Bool is_unsigned) {
+  int idx = (bits - 1) / 64;
+
+  unsigned long long fill = (&op->as64)[idx];
+  int shft = bits % 64;
+  if (shft) {
+    fill <<= 64 - shft;
+    if (is_unsigned)
+      (&op->as64)[idx] = (unsigned long long)fill >> (64 - shft);
+    else
+      (&op->as64)[idx] = (long long)fill >> (64 - shft);
+  }
+  fill = is_unsigned ? 0 : (long long)fill >> 63;
+
+  int top = (bits2 - 1) / 64;
+  while (++idx <= top)
+    (&op->as64)[idx] = fill;
+}
+
+static void __slimcc_bitint_neg(int bits, __slimcc_bitbuf *op) {
+  int cnt = (bits + 63) / 64;
+
+  unsigned long long borrow = 0;
+  for (int i = 0; i < cnt; i++) {
+    unsigned long long tmp;
+    borrow = (tmp = (&op->as64)[i] + borrow) < borrow;
+    borrow |= ((&op->as64)[i] = 0 - tmp) > 0;
+  }
+}
+
+static void __slimcc_bitint_bitnot(int bits, __slimcc_bitbuf *op) {
+  int cnt = (bits + 63) / 64;
+
+  for (int i = 0; i < cnt; i++)
+    (&op->as64)[i] = ~(&op->as64)[i];
+}
+
+static void __slimcc_bitint_bitand(int bits, __slimcc_bitbuf *lh, __slimcc_bitbuf *rh) {
+  int cnt = (bits + 63) / 64;
+
+  for (int i = 0; i < cnt; i++)
+    (&rh->as64)[i] &= (&lh->as64)[i];
+}
+
+static void __slimcc_bitint_bitor(int bits, __slimcc_bitbuf *lh, __slimcc_bitbuf *rh) {
+  int cnt = (bits + 63) / 64;
+
+  for (int i = 0; i < cnt; i++)
+    (&rh->as64)[i] |= (&lh->as64)[i];
+}
+
+static void __slimcc_bitint_bitxor(int bits, __slimcc_bitbuf *lh, __slimcc_bitbuf *rh) {
+  int cnt = (bits + 63) / 64;
+
+  for (int i = 0; i < cnt; i++)
+    (&rh->as64)[i] ^= (&lh->as64)[i];
+}
+
+static void __slimcc_bitint_shl(int bits, __slimcc_bitbuf *src, __slimcc_bitbuf *dst, int amount) {
+  if (amount < 0 || amount >= bits)
+    return;
+
+  int idx = (bits - 1) / 64;
+  int src_idx = idx - amount / 64;
+  int shft = amount % 64;
+
+  unsigned long long hi = (&src->as64)[src_idx--];
+  for (; idx >= 0; idx--) {
+    unsigned long long lo = src_idx >= 0 ? (&src->as64)[src_idx--] : 0;
+    (&dst->as64)[idx] = !shft ? hi : (hi << shft) | (lo >> (64 - shft));
+    hi = lo;
+  }
+}
+
+static void __slimcc_bitint_shr(int bits, __slimcc_bitbuf *src, __slimcc_bitbuf *dst, int amount,
+                     _Bool is_unsigned) {
+  if (amount < 0 || amount >= bits)
+    return;
+
+  int src_idx = amount / 64;
+  int src_top = (bits - 1) / 64;
+  int top = (bits - 1 - amount) / 64;
+  int shft = amount % 64;
+
+  unsigned long long lo = (&src->as64)[src_idx++];
+  for (int idx = 0; idx <= top; idx++) {
+    unsigned long long hi = src_idx <= src_top ? (&src->as64)[src_idx++] : 0;
+    (&dst->as64)[idx] = !shft ? lo : (hi << (64 - shft)) | (lo >> shft);
+    lo = hi;
+  }
+  __slimcc_bitint_sign_ext(bits - amount, dst, bits, is_unsigned);
+}
+
+static void *__slimcc_bitint_bitfield_load(int bits, __slimcc_bitbuf *src, __slimcc_bitbuf *dst, int width,
+                                int ofs, _Bool is_unsigned) {
+  int sz = (bits + 7) / 8;
+
+  for (int i = 0; i < sz; i++)
+    (&dst->as8)[i] = (&src->as8)[i];
+
+  __slimcc_bitint_shl(bits, dst, dst, bits - width - ofs);
+  __slimcc_bitint_shr(bits, dst, dst, bits - width, is_unsigned);
+  return src;
+}
+
+static void __slimcc_bitint_bitfield_save(int bits, __slimcc_bitbuf *src, __slimcc_bitbuf *dst, int width,
+                               int ofs) {
+  int cnt = (bits + 63) / 64;
+  int full_bits = cnt * 64;
+
+  __slimcc_bitbuf mb[cnt], sb[cnt];
+  for (int i = 0; i < cnt; i++)
+    (&mb->as64)[i] = -1;
+
+  __slimcc_bitint_shl(full_bits, mb, mb, full_bits - width);
+  __slimcc_bitint_shl(full_bits, src, sb, full_bits - width);
+
+  __slimcc_bitint_shr(full_bits, mb, mb, full_bits - width - ofs, 1);
+  __slimcc_bitint_shr(full_bits, sb, sb, full_bits - width - ofs, 1);
+
+  __slimcc_bitint_bitnot(full_bits, mb);
+
+  int top = (width + ofs - 1) / 8;
+
+  for (int j = ofs / 8; j <= top; j++)
+    (&dst->as8)[j] = ((&dst->as8)[j] & (&mb->as8)[j]) | (&sb->as8)[j];
+}
+
+static void __slimcc_bitint_add(int bits, __slimcc_bitbuf *lh, __slimcc_bitbuf *rh) {
+  int cnt = (bits + 63) / 64;
+
+  unsigned long long carry = 0;
+  for (int i = 0; i < cnt; i++) {
+    unsigned long long tmp;
+    carry = (tmp = (&rh->as64)[i] + carry) < carry;
+    carry |= ((&rh->as64)[i] = (&lh->as64)[i] + tmp) < tmp;
+  }
+}
+
+static void __slimcc_bitint_sub(int bits, __slimcc_bitbuf *lh, __slimcc_bitbuf *rh) {
+  int cnt = (bits + 63) / 64;
+
+  unsigned long long borrow = 0;
+  for (int i = 0; i < cnt; i++) {
+    unsigned long long tmp;
+    borrow = (tmp = (&rh->as64)[i] + borrow) < borrow;
+    borrow |= ((&rh->as64)[i] = (&lh->as64)[i] - tmp) > (&lh->as64)[i];
+  }
+}
+
+static void __slimcc_bitint_mul(int bits, __slimcc_bitbuf *lh, __slimcc_bitbuf *rh) {
+  int cnt = (bits + 31) / 32;
+
+  unsigned buf[cnt];
+
+  unsigned long long accum = 0;
+  for (int i = 0; i < cnt; i++) {
+    unsigned long long ovf_cnt = 0;
+    for (int j = 0; j <= i; j++) {
+      unsigned long long prod = (unsigned long long)(&lh->as32)[j] * (&rh->as32)[i - j];
+      ovf_cnt += (accum += prod) < prod;
+    }
+    buf[i] = (unsigned)accum;
+    accum = ovf_cnt << 32 | accum >> 32;
+  }
+  for (int j = 0; j < cnt; j++)
+    (&rh->as32)[j] = buf[j];
+}
+
+static void __slimcc_bitint_div(int bits, __slimcc_bitbuf *lh, __slimcc_bitbuf *rh, _Bool is_unsigned, _Bool is_div) {
+  int cnt64 = (bits + 63) / 64;
+
+  __slimcc_bitbuf lb[cnt64 + 1];
+
+  for (int i = 0; i < cnt64; i++) {
+    (&lb->as64)[i] = (&lh->as64)[i];
+    (&lh->as64)[i] = 0;
+  }
+  (&lb->as64)[cnt64] = 0;
+
+  int msl = (bits - 1) / 32;
+  int sign_shft = (bits - 1) % 32;
+
+  _Bool l_neg = is_unsigned ? 0 : ((&lb->as32)[msl] >> sign_shft) & 1;
+  _Bool r_neg = is_unsigned ? 0 : ((&rh->as32)[msl] >> sign_shft) & 1;
+
+  if (l_neg)
+    __slimcc_bitint_neg(bits, lb);
+  if (r_neg)
+    __slimcc_bitint_neg(bits, rh);
+
+  int l_fsb = __slimcc_bitint_first_set(bits, lb);
+  int r_fsb = __slimcc_bitint_first_set(bits, rh);
+
+  int r_ofs = r_fsb % 32;
+  int r_shft = r_ofs ? 32 - r_ofs : 0;
+  int ln = (l_fsb + 31) / 32;
+  int rn = (r_fsb + 31) / 32;
+
+  if (r_shft) {
+    __slimcc_bitint_shl(bits + 64, lb, lb, r_shft);
+    __slimcc_bitint_shl(rn * 32, rh, rh, r_shft);
+  }
+
+  for (int qi = ln - rn; qi >= 0; qi--) {
+    unsigned quo;
+    if ((&lb->as32)[qi + rn] == (&rh->as32)[rn - 1]) {
+      quo = -1;
+    } else {
+      unsigned long long top = (unsigned long long)(&lb->as32)[qi + rn] << 32 | (&lb->as32)[qi + rn - 1];
+      unsigned long long q = top / (&rh->as32)[rn - 1];
+      unsigned long long r = top % (&rh->as32)[rn - 1];
+
+      if (rn > 1) {
+        r = r << 32 | (&lb->as32)[qi + rn - 2];
+        unsigned long long r_inc = (unsigned long long)(&rh->as32)[rn - 1] << 32;
+        while (r < q * (&rh->as32)[rn - 2]) {
+          q -= 1;
+          if ((r += r_inc) < r_inc)
+            break;
+        }
+      }
+      quo = q;
+    }
+
+    unsigned sub = 0;
+    for (int i = 0; i < rn; i++) {
+      unsigned long long prod = (unsigned long long)quo * (&rh->as32)[i];
+
+      unsigned tmp = (unsigned)prod + sub;
+      sub = (tmp < sub) + ((&lb->as32)[qi + i] < tmp) + (prod >> 32);
+      (&lb->as32)[qi + i] -= tmp;
+    }
+
+    unsigned rem = (&lb->as32)[qi + rn] - sub;
+    if (rem > (&lb->as32)[qi + rn]) {
+      unsigned long long carry = 0;
+      for (int i = 0; i < rn; i++) {
+        unsigned long long tmp;
+        carry = (tmp = (&rh->as32)[i] + carry) < carry;
+        carry |= ((&lb->as32)[qi + i] = (&lb->as32)[qi + i] + tmp) < tmp;
+      }
+      rem += carry;
+      quo -= 1;
+    }
+    (&lb->as32)[qi + rn] = rem;
+    (&lh->as32)[qi] = quo;
+  }
+
+  __slimcc_bitbuf *res;
+  if (is_div) {
+    if (l_neg + r_neg == 1)
+      __slimcc_bitint_neg(bits, lh);
+    res = lh;
+  } else {
+    if (r_shft)
+      __slimcc_bitint_shr(bits + 64, lb, lb, r_shft, 1);
+    if (l_neg)
+      __slimcc_bitint_neg(bits, lb);
+    res = lb;
+  }
+  for (int j = 0; j < cnt64; j++)
+    (&rh->as64)[j] = (&res->as64)[j];
+}
+
+// _BitInt と浮動小数点の変換（2026-11-20。QuickJS の intl・temporal が __int128（slimcc では _BitInt(128)）と double を
+// 行き来する。前は「Unimplemented cast」）。double → _BitInt はゼロに向かって切り捨て（C の整数への変換と同じ）。
+// 表せない値（無限大・NaN・大きすぎるもの）は C では未定義で、ここでは下のビットだけを残す（無限大・NaN は 0）。
+// _BitInt → 浮動小数点は、いちばん上の 64 ビットに、それより下に 1 が残っていれば最下位を立てて（sticky）変換し、
+// 2 の累乗を掛ける（最近接・偶数への丸めが 1 回で済む。float も double を経ない）
+static void __slimcc_bitint_from_f64(int bits, __slimcc_bitbuf *dst, _Bool is_unsigned, double v) {
+  int cnt = (bits + 63) / 64;
+  for (int i = 0; i < cnt; i++)
+    (&dst->as64)[i] = 0;
+  union { double d; unsigned long long u; } c;
+  c.d = v;
+  int neg = (int)(c.u >> 63);
+  int e = (int)((c.u >> 52) & 0x7ff);
+  unsigned long long m = c.u & ((1ULL << 52) - 1);
+  if (e == 0x7ff || e == 0)
+    return;     // 無限大・NaN（未定義）、非正規化数・0（|v| < 1）
+  m |= 1ULL << 52;
+  int sh = e - 1075;    // v = m * 2^sh
+  if (sh <= -53)
+    return;
+  if (sh < 0) {
+    m >>= -sh;
+    sh = 0;
+  }
+  int w = sh / 64, b = sh % 64;
+  if (w < cnt)
+    (&dst->as64)[w] |= m << b;
+  if (b && w + 1 < cnt)
+    (&dst->as64)[w + 1] |= m >> (64 - b);
+  if (neg)
+    __slimcc_bitint_neg(bits, dst);
+  __slimcc_bitint_sign_ext(bits, dst, bits, is_unsigned);
+}
+
+// 絶対値の i 番目の語（負なら 2 の補数を外す。low は 0 でない最下位の語の番号）
+static unsigned long long __slimcc_bitint_mag(__slimcc_bitbuf *src, int i, _Bool neg, int low) {
+  unsigned long long w = (&src->as64)[i];
+  if (!neg)
+    return w;
+  if (i < low)
+    return 0;
+  return i == low ? 0 - w : ~w;
+}
+
+// 絶対値を「上の 64 ビット（sticky 付き）× 2^scale」に。0 なら 0 を返す。*neg に符号
+static unsigned long long __slimcc_bitint_window(int bits, __slimcc_bitbuf *src, _Bool is_unsigned, int *scale,
+                                                 _Bool *neg) {
+  int cnt = (bits + 63) / 64;
+  int topbit = (bits - 1) % 64;
+  *neg = !is_unsigned && (((&src->as64)[cnt - 1] >> topbit) & 1);
+  int low = 0;
+  while (low < cnt && (&src->as64)[low] == 0)
+    low++;
+  if (low == cnt) {
+    *scale = 0;
+    return 0;
+  }
+  int hi = cnt - 1;
+  if (!*neg) {
+    unsigned long long mask = topbit == 63 ? ~0ULL : (1ULL << (topbit + 1)) - 1;
+    while (hi >= 0 && ((hi == cnt - 1 ? (&src->as64)[hi] & mask : (&src->as64)[hi]) == 0))
+      hi--;
+  } else {
+    while (hi >= 0 && __slimcc_bitint_mag(src, hi, 1, low) == 0)
+      hi--;
+  }
+  if (hi < 0) {
+    *scale = 0;
+    return 0;
+  }
+  unsigned long long top = __slimcc_bitint_mag(src, hi, *neg, low);
+  if (!*neg && hi == cnt - 1 && topbit != 63)
+    top &= (1ULL << (topbit + 1)) - 1;
+  int bp = 63;
+  while (!((top >> bp) & 1))
+    bp--;
+  int p = hi * 64 + bp;     // いちばん上の 1 の位置
+  if (p < 64) {
+    *scale = 0;
+    return top;
+  }
+  unsigned long long next = __slimcc_bitint_mag(src, hi - 1, *neg, low);
+  unsigned long long win = bp == 63 ? top : (top << (63 - bp)) | (next >> (bp + 1));
+  unsigned long long rest = bp == 63 ? next : next << (63 - bp);
+  _Bool sticky = rest != 0;
+  for (int i = hi - 2; i >= 0 && !sticky; i--)
+    sticky = __slimcc_bitint_mag(src, i, *neg, low) != 0;
+  *scale = p - 63;
+  return win | sticky;
+}
+
+static double __slimcc_bitint_to_f64(int bits, __slimcc_bitbuf *src, _Bool is_unsigned) {
+  int scale;
+  _Bool neg;
+  unsigned long long win = __slimcc_bitint_window(bits, src, is_unsigned, &scale, &neg);
+  double d = (double)win;
+  while (scale > 0) {
+    int k = scale > 1000 ? 1000 : scale;
+    union { double d; unsigned long long u; } p;
+    p.u = (unsigned long long)(k + 1023) << 52;
+    d *= p.d;
+    scale -= k;
+  }
+  return neg ? -d : d;
+}
+
+static float __slimcc_bitint_to_f32(int bits, __slimcc_bitbuf *src, _Bool is_unsigned) {
+  int scale;
+  _Bool neg;
+  unsigned long long win = __slimcc_bitint_window(bits, src, is_unsigned, &scale, &neg);
+  float f = (float)win;
+  while (scale > 0) {
+    int k = scale > 100 ? 100 : scale;
+    union { float f; unsigned u; } p;
+    p.u = (unsigned)(k + 127) << 23;
+    f *= p.f;
+    scale -= k;
+  }
+  return neg ? -f : f;
+}

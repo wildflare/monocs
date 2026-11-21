@@ -1,0 +1,6 @@
+target: prog
+flag: -DCOMPAT_X
+src: DIR/prog.c
+src: DIR/core1.c
+src: DIR/core2.c
+src: DIR/lib1.c

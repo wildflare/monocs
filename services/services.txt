@@ -1,0 +1,10 @@
+# 起動時に始めるサービス（os/kernel/svc.c）。1 行に「FILE.c（かフォルダ） 引数...」（/usr/sbin のソース）。# で始まる行は飛ばす
+/usr/sbin/httpd.c
+/usr/sbin/telnetd.c
+# SSH（ポート 22）。USB からはパスワードなし、Wi-Fi からはパスワード（passwd）か公開鍵（/.ssh/authorized_keys）
+/usr/sbin/sshd
+# 内蔵 Wi-Fi に自動でつなぐ（/etc/wpa_supplicant.conf にネットワークがあれば。なければ何もしない）
+/usr/sbin/wifid.c
+# 日時を合わせる。sntp.c [SERVER...] [-i 秒] [-z +0900]。まず Pi 5（chrony。tools/pi5/setup-chrony.sh）、
+# 答えがなければ Wi-Fi の先の NTP サーバー
+/usr/sbin/sntp.c 192.168.7.1 pool.ntp.org -i 3600 -z +0900

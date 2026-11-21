@@ -1,0 +1,20 @@
+# Zero 2 W の SD カード（FAT 領域）に置く config.txt
+arm_64bit=1
+# カーネル・dtb・overlays は boot/ から読む（ルートを整理するため。2026-11-13）。boot/ にカーネルと dtb が
+# なければ、ファームウェアはこの指定を無視してルートから読む。overlays は boot/overlays/README があるときだけ
+# boot/overlays/ から（出典: Raspberry Pi の資料 config.txt の os_prefix・overlay_prefix）。
+# ルートに残るのは、動かせないもの（bootcode.bin・start.elf・fixup.dat・config.txt）だけ
+os_prefix=boot/
+kernel=kernel8.img
+enable_uart=1
+# CPU を最高のクロック（Zero 2 W は 1000 MHz）に保つ。ファームウェアは起動から 60 秒（initial_turbo の既定。2024 年 11 月の
+# ファームウェアから）だけ最高で動かし、その後は OS の cpufreq が頼まなければ最低（600 MHz）に下げる。Monocs には cpufreq が
+# ないので、何もしないと 60 秒後から計算が 4 割遅くなる（2026-11-13 に実機で確かめた）。待つ間は wfi で眠るので、
+# 消費電力の差は小さい。保証の印が付くのは over_voltage_* と組み合わせたときだけ（電圧は変えない）。
+# 出典: Raspberry Pi の資料 config.txt の force_turbo・initial_turbo・arm_freq_min
+force_turbo=1
+# PL011 を Bluetooth から外し、GPIO14/15 に出す
+dtoverlay=disable-bt
+init_uart_clock=48000000
+# ファームウェアのログも UART に出す（カーネルが何も出さないときの切り分け用）
+uart_2ndstage=1

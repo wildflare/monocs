@@ -1,0 +1,23 @@
+# picolibc を自作OS向けにビルドするための meson クロスファイル。
+# Pi 5 のネイティブ GCC を使い、カーネルと同じ CPU 指定でビルドする。
+# picolibc は MMU 有効後（Normal メモリ）にだけ呼ぶので -mstrict-align は付けない。
+
+[binaries]
+c = 'gcc'
+ar = 'ar'
+as = 'as'
+ld = 'ld'
+nm = 'nm'
+strip = 'strip'
+
+[host_machine]
+system = 'none'
+cpu_family = 'aarch64'
+cpu = 'cortex-a53'
+endian = 'little'
+
+[built-in options]
+c_args = ['-mcpu=cortex-a53', '-mno-outline-atomics', '-fno-pie', '-fno-stack-protector']
+
+[properties]
+skip_sanity_check = true

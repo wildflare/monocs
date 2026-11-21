@@ -1,0 +1,9 @@
+target: all
+flag: -std=c11
+flag: -DVERSION="1.2"
+flag: -DNAME=x
+flag: -IDIR/include
+flag: -I/abs
+src: DIR/a.c
+src: DIR/b.c
+src: DIR/sub/c.c

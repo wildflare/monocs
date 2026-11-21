@@ -1,0 +1,3 @@
+# slimcc-jit（libslimcc のメモリ上のリンク）で扱わないテスト
+test/tls.c    # スレッドローカル変数（Monocs はシングルタスクなので、メモリ上のリンカは TLS を扱わない）
+test/tls2.c   # 同上
