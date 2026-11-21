@@ -21,7 +21,8 @@ Raspberry Pi Zero 2 W 向けのベアメタル自作OS「Monocs」（Mono + Comp
 - 使い方と仕組みの全体（初めて使う人向けのリファレンスマニュアル）は `docs/manual/`（2026-11-21。ユーザーの希望。OS の仕様・使い方を変えたら、マニュアルも直す）。
 - **まず `docs/resume.md`（再開の手引き）を読む**: 今できること、つなぎ方、よく使うコマンド、確かめ方、気をつけること、次の候補を 1 つにまとめてある。この CLAUDE.md は、経緯・測った数字・不具合の記録を含む詳しい版。
 
-- 作業は master ブランチにすべてコミット済み（リモートはない）。実機（Zero 2 W）では標準の slimcc 版カーネル（2026-11-16 から。実機の上で作り直したものと同じ）が動き、SD カードに /root/apps/mi・fd・lua（自分のアプリのソース）、/usr/bin・/usr/sbin（付いてくるコマンドとサービスのソース）、/usr/src/kernel（セルフホストのビルドの材料。古いことがあるので、使う前に `nos.py pushdir build/selfsrc /usr/src/kernel`）がある。フォルダの構成は下の「フォルダの構成（2026-11-19）」。
+- ブランチ（2026-11-21。GitHub に公開するため、ユーザーと合意）: 作業は **main**（履歴のないブランチから、2026-11-21 の中身を 1 つのコミットにして始めた。公開するのはこれだけ）。それまでの全部の履歴は手元のブランチ **archive**（と build/sd-backup/monocs-archive-20261121.bundle）に残す。**archive は push しない**（`git push --all` もしない）。コミットの作者のアドレスは GitHub の非公開のアドレス（このリポジトリの git config）。main のファイル・コミットのメッセージは公開されるので、家のネットワークの情報（ルーターの SSID、実機の MAC アドレス）などの個人の情報を書かない。
+- 作業は main にすべてコミット済み（リモートはまだない）。実機（Zero 2 W）では標準の slimcc 版カーネル（2026-11-16 から。実機の上で作り直したものと同じ）が動き、SD カードに /root/apps/mi・fd・lua（自分のアプリのソース）、/usr/bin・/usr/sbin（付いてくるコマンドとサービスのソース）、/usr/src/kernel（セルフホストのビルドの材料。古いことがあるので、使う前に `nos.py pushdir build/selfsrc /usr/src/kernel`）がある。フォルダの構成は下の「フォルダの構成（2026-11-19）」。
 - つなぎ方: Zero 2 W の「USB」端子（内側）を Pi 5 に（電源もここから。PWR IN は空ける）。UART（GPIO14/15、`/dev/ttyAMA0`）もつないだまま。詳しくは docs/hardware-test.md の冒頭。Wi-Fi だけでも開発できる（2026-11-16。`export NOS_HOST=192.168.3.96` で nos.py が ssh を使う。docs/resume.md の 3、下の「Wi-Fi だけで開発する」）。
 - よく使うもの:
   - `make`（標準のカーネル = slimcc 版 build/kslim/kernel8.img。2026-11-16 から）、`make kernel-gcc`（比べる用の GCC 版 build/kernel8.img）、`make sdimage`、`make cc`
