@@ -46,7 +46,7 @@
 | `uptime` | 起動からの時間 |
 | `date [-s @秒\|-s 年-月-日 時:分[:秒]] [-z +0900]` | 日時・タイムゾーン |
 | `usb` | USB とネットワークの様子 |
-| `wifi [start\|scan\|connect [SSID PASS]\|disconnect\|status\|log\|events]` | 内蔵 Wi-Fi |
+| `wifi [start\|scan\|connect [SSID PASS]\|disconnect\|status\|log\|events\|perf [reset]\|pm [0\|1\|2]]` | 内蔵 Wi-Fi（perf: 時間の内訳、pm: 省電力） |
 | `sync` | 書き込みをすぐ SD カードへ |
 | `reboot [tryboot]` | 再起動（tryboot: 次の 1 回だけ tryboot.txt で） |
 | `poweroff`・`halt` | 書き出して止まる |

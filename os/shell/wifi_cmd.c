@@ -283,6 +283,28 @@ static int cmd_irq(int argc, char **argv)
     return 0;
 }
 
+// wifi pm [0|1|2]: チップの省電力（2026-11-22）。WLC_GET_PM（85）・WLC_SET_PM（86）。brcmfmac の値と同じ:
+// 0 = 切る（PM_OFF。Monocs の既定）、1 = いちばん省電力（PM_MAX）、2 = 通信があれば起きている（PM_FAST。Linux の既定）
+static int cmd_pm(int argc, char **argv)
+{
+    uint32_t v;
+    if (argc >= 1) {
+        v = (uint32_t)strtoul(argv[0], nullptr, 0);
+        if (v > 2)
+            return -1;
+        int r = wifi_ioctl(86, true, &v, sizeof v);
+        if (r)
+            printf("wifi: set pm failed (%d)\n", r);
+    }
+    v = 0;
+    int r = wifi_ioctl(85, false, &v, sizeof v);
+    if (r)
+        printf("wifi: get pm failed (%d)\n", r);
+    else
+        printf("wifi: pm %u (%s)\n", v, v == 0 ? "off" : v == 1 ? "max power saving" : v == 2 ? "fast" : "?");
+    return 0;
+}
+
 static int cmd_iovar(int argc, char **argv)
 {
     if (argc < 1)
@@ -312,7 +334,7 @@ static const struct {
 } subcommands[] = {
     {"start", cmd_start, true},   {"scan", cmd_scan, true},     {"connect", cmd_connect, true},
     {"disconnect", cmd_disconnect, true}, {"status", cmd_status, false}, {"log", cmd_log, false},
-    {"events", cmd_events, false}, {"irq", cmd_irq, false}, {"perf", cmd_perf, false},     {"iovar", cmd_iovar, false},
+    {"events", cmd_events, false}, {"irq", cmd_irq, false}, {"perf", cmd_perf, false}, {"pm", cmd_pm, false},     {"iovar", cmd_iovar, false},
 };
 
 int cmd_wifi(int argc, char **argv)
@@ -332,6 +354,6 @@ int cmd_wifi(int argc, char **argv)
             return r;
         break;
     }
-    printf("usage: wifi [start|scan|connect [SSID [PASS]]|disconnect|status|log|events|irq on|off|iovar NAME [VALUE]]\n");
+    printf("usage: wifi [start|scan|connect [SSID [PASS]]|disconnect|status|log|events|irq on|off|perf [reset]|pm [0|1|2]|iovar NAME [VALUE]]\n");
     return 1;
 }
