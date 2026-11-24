@@ -94,6 +94,27 @@ sh tools/slimcc/devbench.sh build/kernel8.img build/kslim/kernel8.img   # 両方
   名前の表（fnv_hash・get_entry_h）、字句解析（tokenize・new_token・read_ident）、中間表現の各段
   （ir_count_uses・ir_resolve_operands・ir_cleanup・ir_liveness・ir_fingerprint）。どれも 1〜4%。
 
+## 4.1 AArch64 の命令で、まだ使っていないもの（2026-11-22 に cc/ir.inc を調べた）
+
+使っているもの: 番地の形（`[x, #imm]`・`[x, y, lsl #k]`・`[x, w, sxtw #k]`）、w レジスタの 32 ビットの計算、`madd`・`msub`、
+`fmadd`・`fnmsub`（GNU の規格のとき）、`cbz`・`cbnz`・`cset`、ずらす命令をまとめた計算、`fsqrt`・`fabs`、A53 向けの並べ替え、葉の関数のフレームの省略。
+
+使っていないもの（効きそうな順の見込み。どれも測ってから決める）:
+
+| 機能 | 中身 | 効きそうな場面 |
+|---|---|---|
+| ベクトル化（NEON） | 1 命令で 2〜4 個を一度に計算 | 配列・浮動小数点のループ（nbody の GCC との差の大きな理由） |
+| 条件付きの選択（`csel`・`csinc`・`csneg`・`ccmp`、`fcsel`） | 分岐せずに条件で値を選ぶ・比べを続ける | `a > b ? a : b`、小さな if。分岐の読み違いが減る。内蔵アセンブラに `fcsel` がない（足す） |
+| `ldp`・`stp` のまとめ | 関数の入口・出口だけで使っている。ふつうの並んだ読み書きはまとめていない | 構造体のコピー、並んだ変数（4. の「ループの番地の計算」と同じ候補） |
+| 後置・前置の番地の形 | `ldr x0, [x1], #8` | ポインタを進めるループ |
+| 定数の割り算を掛け算に（`umulh`・`smulh`） | `/ 10` などを掛け算とずらしで | 割り算の多い計算（A53 の割り算は w で約 11、x で約 19 サイクル） |
+| ビットの取り出し（`ubfx`・`sbfx`・`bfi`・`bfxil`） | 今までのコード生成（codegen.c）だけが使い、中間表現は使っていない | ビットフィールド |
+| `tbz`・`tbnz` | 1 ビットを見て飛ぶ | フラグの判定 |
+| `clz`・`rbit`・`rev`・`cnt` | 先頭の 0 の数、ビット・バイトを逆に、1 の数 | `__builtin_clz` など。`__builtin_bswap` は slimcc にない（`<endian.h>` の be32toh などがアプリで使えない理由） |
+| `frintm`・`frintp`・`frintz`・`frinta` | `floor`・`ceil`・`trunc`・`round` を命令で | 浮動小数点の丸め |
+
+この CPU にないもの: LSE のアトミック命令（ARMv8.1 から）、暗号の命令（Zero 2 W の Cortex-A53 にはない）。
+
 ## 5.1 中間表現で扱うようにしたもの（2026-11-21）
 
 - スタックで渡す引数: 呼ばれる側は、その場所（x29 + 16 + stack_offset）を変数の場所にする（ir_slot_at。SSA の
