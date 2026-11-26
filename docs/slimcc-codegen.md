@@ -318,3 +318,17 @@ sh tools/slimcc/devbench.sh build/kernel8.img build/kslim/kernel8.img   # 両方
   確かめ: make cc-test、verify.sh（quick なし。すべて一致）、QEMU の shell・pthread・openmp・linuxapi、
   実機の compat_dev.sh（Wi-Fi）と Lua の公式テスト（新しいコンパイラでコンパイルし直して final OK）。
 - まだ: 構造体を渡す呼び出しのある関数（今は x0〜x7 を使わない）、呼び出しをまたぐ値の退避（x19〜 の数）。
+- 続き（2026-11-27）: x0〜x7 を使えなかった関数の理由を数えると、parse.c・tokenize.c・codegen.c・preprocess.c で
+  85 関数のうち 80 が構造体のコピー（IR_MEMCPY）だった。memcpy が使うのは x16・x17 と、逃がした土台を読む x6・x7
+  だけなので、その関数では x6・x7 だけを避ける（ir_low_ok の no67）。2 世代目の .text 541,524 → 531,316 バイト。
+  実機の速さは変わらない（0.2% 以内。memcpy のある関数は熱いところではない）。
+
+## 13. 退避の要るレジスタを stp・ldp で 2 つずつ（2026-11-27）
+
+- 関数の入口と出口で、x19〜x28・d8〜d15 を 1 つずつ str・ldr していた（parse.c・tokenize.c・codegen.c で
+  保存 2,274・復元 2,324 命令、全体の 5.3%）。同じ種類の隣どうしを stp・ldp にする（ir_save_regs。オフセットが
+  -512〜504 の間だけ。外なら今までどおり）。
+- 効果: 命令の数 parse.c 25,326 → 24,500（3.3% 減）。12 の続き（memcpy の x6・x7）と合わせて、2 世代目の .text
+  541,524 → 518,132 バイト、実機のカーネルの中のコンパイラ parse.c 534 → 526M、codegen.c 1,165 → 1,152M
+  （前後のカーネルを交互に 2 回ずつ）。
+- 確かめ: cmp_o.sh、make cc-test、verify.sh（quick なし。すべて一致）。

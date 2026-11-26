@@ -4901,12 +4901,17 @@ static uint8_t *ir_fixed_hints(void) {
 // x0〜x7 を値に割り当ててよいか（2026-11-16）: x0〜x7 を作業用に使う命令がない。前は x0〜x7 をいつも割り当てず、
 // 小さな葉の関数（fnv_hash など）でも退避の要る x19〜 を使い、入口と出口で保存・復元していた（GCC は x0〜x7 も使う）。
 // 2026-11-27 から関数を呼ぶ関数でも（呼び出しをまたぐ値は x19〜 のまま。呼び出しの引数は並列に写す ir_par_move）。
-// 構造体の引数（x0〜x7 に読み込みながら写す）・構造体の戻り値の 2 語目（IR_X1）のある関数は使わない
-static bool ir_low_ok(void) {
+// 構造体の引数（x0〜x7 に読み込みながら写す）・構造体の戻り値の 2 語目（IR_X1）のある関数は使わない。
+// 構造体のコピー（IR_MEMCPY。逃がした土台を x6・x7 に読む）のある関数では x6・x7 だけ使わない（*no67。2026-11-27）
+static bool ir_low_ok(bool *no67) {
+  *no67 = false;
   for (int i = 0; i < ir_norder; i++)
     for (IrInst *in = ir_order[i]->first; in; in = in->next)
       switch (in->op) {
-      case IR_MEMCPY: case IR_ASM: case IR_ASMOUT: case IR_PARAM_STRUCT:
+      case IR_MEMCPY:
+        *no67 = true;
+        break;
+      case IR_ASM: case IR_ASMOUT: case IR_PARAM_STRUCT:
       case IR_CAS: case IR_XCHG: case IR_X1:
         return false;
       case IR_CALL:
@@ -4973,7 +4978,8 @@ static void ir_linear_scan(void) {
   }
   // x1〜x7 を使うとき: 引数（PARAM）は自分の入ってくるレジスタにだけ置ける。ほかの値は、引数を全部
   // 取り出した後に始まるものだけ（まだ読んでいない引数のレジスタを壊さない）
-  bool low = ir_low_ok();
+  bool no67;
+  bool low = ir_low_ok(&no67);
   uint8_t *preg = low ? ir_fixed_hints() : NULL;
   int param_end = -1;
   if (low)
@@ -5025,6 +5031,8 @@ static void ir_linear_scan(void) {
       int r = order[k];
       free_until[r] = !cur->cross_call || ir_callee_tab[r] ? INT32_MAX : 0;
     }
+    if (low && !cur->fp && no67)
+      free_until[6] = free_until[7] = 0;
     if (low && !cur->fp) {
       if (cur->op == IR_PARAM) {
         for (int k = 0; k <= 7; k++)
@@ -6901,6 +6909,21 @@ static void ir_emit_fn(Obj *fn) {
   ir_rec_write(out);
 }
 
+// 退避の要るレジスタの保存（restore なら復元）。同じ種類の隣どうしは stp・ldp で 2 つずつ（オフセットが
+// -512〜504 のとき。2026-11-27。前は 1 つずつ str・ldr で、入口と出口の命令の 5% あまりがこれだった）
+static void ir_save_regs(const int *save, int nsave, bool restore) {
+  for (int i = 0; i < nsave; i++) {
+    int ofs = ir_save_ofs + 8 * i;
+    char c = save[i] >= 32 ? 'd' : 'x';
+    if (i + 1 < nsave && (save[i + 1] >= 32) == (save[i] >= 32) && ofs >= -512 && ofs + 8 <= 504) {
+      E3(restore ? "ldp" : "stp", aR(c, save[i] % 32), aR(c, save[i + 1] % 32), aMem(aX(29), ofs));
+      i++;
+      continue;
+    }
+    E2(restore ? "ldr" : "str", aR(c, save[i] % 32), ir_memop(ofs, aX(29), 8, aX(16)));
+  }
+}
+
 static void ir_emit_fn2(Obj *fn) {
   // 入口: 退避するレジスタの場所を決めてからフレームを作る
   ir_fbase_on = false;
@@ -6930,8 +6953,7 @@ static void ir_emit_fn2(Obj *fn) {
   char buf[STRBUF_SZ];
   if (ir_has_asm)
     E3("stp", aX(19), aX(20), aMem(aX(29), -16));
-  for (int i = 0; i < nsave; i++)
-    E2("str", aR(save[i] >= 32 ? 'd' : 'x', save[i] % 32), ir_memop(ir_save_ofs + 8 * i, aX(29), 8, aX(16)));
+  ir_save_regs(save, nsave, false);
   // フレームの土台（ir_fmem）。x29 から届かない所（-256 より先）があるときだけ
   ir_fbase_on = false;
   ir_fbase_frame = frame;
@@ -7023,8 +7045,7 @@ static void ir_emit_fn2(Obj *fn) {
   }
 
   Printfsn(".L.ir.%" PRIi64 ".rtn:", ir_label_base);
-  for (int i = 0; i < nsave; i++)
-    E2("ldr", aR(save[i] >= 32 ? 'd' : 'x', save[i] % 32), ir_memop(ir_save_ofs + 8 * i, aX(29), 8, aX(16)));
+  ir_save_regs(save, nsave, true);
   if (ir_has_asm)
     E3("ldp", aX(19), aX(20), aMem(aX(29), -16));
   if (!leaf) {
