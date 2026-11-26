@@ -152,6 +152,20 @@ Linux 用のソースと Makefile を、変えずにフォルダごと `/root/ap
 Pi 5 のフォルダから送るのは `sh tools/apps/push.sh ~/dev/tools/NAME` です。
 足りない関数が出たら OS に足していきます（どうやったかの記録は `CLAUDE.md` の各ソフトの項）。
 
+## 6.7.1 サンドボックスと C の Web
+
+人が作った C のコードは、サンドボックスで動かせます（OS のメモリ・ハードウェア・ファイル・ネットワークに手を出せない。
+使えるのは画面・キー・時刻・乱数・計算・curses）。
+
+```sh
+sandbox game.c                                   # サンドボックスで動かす
+sandbox http://相手/root/share/game.c#sha256=…   # 取ってきて、中身のハッシュを確かめてから
+cweb /usr/share/samples/cweb/index.c             # C の Web のブラウザ（目次・ゲーム・ライフゲーム）
+```
+
+C の Web のページは、`#include <cweb.h>` して `cweb_go("next.c")` で次のページへ、`cweb_back()` で戻る C のプログラムです。
+詳しくは `docs/sandbox.md`・`docs/cweb.md`。
+
 ## 6.8 コンパイルのキャッシュ
 
 `run`・名前で動かす・`make` のどれも、**2 回目からはキャッシュから動きます**（`run -lpwm servo.c` のようにライブラリを使うときも同じ）。

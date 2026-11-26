@@ -154,7 +154,7 @@ sdcard: $(KSLIM_IMG)
 # SD カードイメージ（QEMU 用。実機用に Rufus などで書き込むこともできる）
 sdimage: $(SDIMG)
 
-$(SDIMG): $(KSLIM_IMG) os/boot/config.txt tools/mksd.sh tools/mkimg.sh LICENSE THIRD_PARTY.md $(wildcard os/api/include/*.h os/api/include/*/*.h) $(wildcard samples/*) $(wildcard bin/*) $(wildcard bin/*/*) $(wildcard lib/*/*) $(wildcard cc/slimcc_headers/include/*) $(wildcard services/*) $(wildcard services/*/*)
+$(SDIMG): $(KSLIM_IMG) os/boot/config.txt tools/mksd.sh tools/mkimg.sh LICENSE THIRD_PARTY.md $(wildcard os/api/include/*.h os/api/include/*/*.h) $(wildcard samples/*) $(wildcard samples/*/*) $(wildcard bin/*) $(wildcard bin/*/*) $(wildcard lib/*/*) $(wildcard cc/slimcc_headers/include/*) $(wildcard services/*) $(wildcard services/*/*)
 	tools/mksd.sh
 	tools/mkimg.sh
 
