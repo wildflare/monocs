@@ -39,33 +39,27 @@ static void *no_os_functions(const char *, void *)
 
 bool sandbox_fetch(const char *url, char *out, size_t out_size);    // sandbox_fetch.c
 
-int sandbox_cmd(int argc, char **argv)
+// ソースのファイル path をサンドボックスで動かす（コンパイル・つなぐ・動かす）。argv はプログラムに渡すもの。
+// 終わり方を res に、終了の値を返す（プログラムの値、139・130・124、動かせなければ 1）。cweb_cmd.c も使う
+int sandbox_run_file(const char *path, int argc, char **argv, enum sandbox_result *res)
 {
-    if (argc < 2) {
-        fprintf(stderr, "usage: sandbox FILE.c|http://…/FILE.c[#sha256=…] [ARGS...]\n");
-        return 2;
-    }
-    char fetched[300];
-    if (!strncmp(argv[1], "http://", 7) || !strncmp(argv[1], "https://", 8)) {   // 取ってきて確かめる（sandbox_fetch.c）
-        if (!sandbox_fetch(argv[1], fetched, sizeof fetched))
-            return 1;
-        argv[1] = fetched;
-    }
     SlimccObj *objs[MAX_OBJS];
     int n = 0, r = 1;
+    *res = SANDBOX_NOT_STARTED;
     static const char *const incs[] = { LIB_DIR, nullptr };
     static const char *const defs[] = { "_POSIX_MONOTONIC_CLOCK", nullptr };   // ふつうのアプリと同じ（run.c の app_defines）
-    SlimccOptions opt = { .std = "gnu23", .defines = defs };
+    // プログラムも LIB_DIR を -I に（cweb.h などサンドボックスだけのヘッダー）
+    SlimccOptions opt = { .std = "gnu23", .defines = defs, .include_paths = incs };
     SlimccOptions lib_opt = { .std = "gnu23", .include_paths = incs, .defines = defs };
     SlimccImage *img = nullptr;
     uint8_t *region = nullptr;
     uint32_t intr0 = uart_shell_interrupts();     // コンパイルの途中の Ctrl-C でも、動かさずに止める
 
     // キャッシュのキー: オプションを表す文字列（ふつうのアプリの run とは違う印を頭に）
-    static const char key_prog[] = "sandbox\x1fgnu23\x1f-D_POSIX_MONOTONIC_CLOCK";
+    static const char key_prog[] = "sandbox\x1fgnu23\x1f-I" LIB_DIR "\x1f-D_POSIX_MONOTONIC_CLOCK";
     static const char key_lib[] = "sandbox-lib\x1fgnu23\x1f-I" LIB_DIR "\x1f-D_POSIX_MONOTONIC_CLOCK";
     cache_begin();
-    if (!(objs[n++] = cache_compile(argv[1], &opt, key_prog)))
+    if (!(objs[n++] = cache_compile(path, &opt, key_prog)))
         goto done;
     // ライブラリの .c: 頭のフォルダと、curses/（OS の curses の写し）・libc/（wcwidth）
     static const char *const dirs[] = { LIB_DIR, LIB_DIR "/curses", LIB_DIR "/libc" };
@@ -107,16 +101,19 @@ int sandbox_cmd(int argc, char **argv)
         goto done;
     }
     if (uart_shell_interrupts() != intr0) {
+        *res = SANDBOX_INTERRUPTED;
         r = 130;
         goto done;
     }
     int64_t status = 0;
-    switch (sandbox_enter(region, (uint64_t)entry, true, argc - 1, argv + 1, 0, &status)) {
+    *res = sandbox_enter(region, (uint64_t)entry, true, argc, argv, 0, &status);
+    switch (*res) {
     case SANDBOX_EXITED:      r = (int)(status & 0xFF); break;
     case SANDBOX_FAULTED:     r = 139; break;
     case SANDBOX_INTERRUPTED: r = 130; break;
     case SANDBOX_TIMEDOUT:    r = 124; break;
     case SANDBOX_NOT_STARTED: fprintf(stderr, "sandbox: cannot start\n"); r = 1; break;
+    case SANDBOX_NAVIGATE:    r = 0; break;     // ページから移る（cweb）。sandbox だけのときは終わるだけ
     }
 done:
     cache_end();
@@ -128,4 +125,21 @@ done:
     if (region)
         sandbox_region_free(region);
     return r;
+}
+
+int sandbox_cmd(int argc, char **argv)
+{
+    if (argc < 2) {
+        fprintf(stderr, "usage: sandbox FILE.c|http://…/FILE.c[#sha256=…] [ARGS...]\n");
+        return 2;
+    }
+    char fetched[300];
+    const char *path = argv[1];
+    if (!strncmp(argv[1], "http://", 7) || !strncmp(argv[1], "https://", 8)) {   // 取ってきて確かめる（sandbox_fetch.c）
+        if (!sandbox_fetch(argv[1], fetched, sizeof fetched))
+            return 1;
+        path = fetched;
+    }
+    enum sandbox_result res;
+    return sandbox_run_file(path, argc - 1, argv + 1, &res);
 }

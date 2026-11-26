@@ -34,6 +34,7 @@
 #define SYS_CLOCK   4       // clock(id): ナノ秒（0 = 実時間、1 = 起動から）
 #define SYS_SLEEP   5       // sleep(ns)
 #define SYS_RANDOM  6       // random(buf, len ≤ 256): 0 か -1
+#define SYS_GO      7       // go(url, len, back): ページを終えて、ほかのページへ移る（back が 0 以外なら戻る。docs/cweb.md）
 #define ESR_EC(e)   (((e) >> 26) & 0x3F)
 #define EC_SVC64    0x15
 
@@ -46,7 +47,16 @@ static int64_t exit_status;
 static uint32_t intr_at_start;
 static uint64_t deadline_us;
 static uintptr_t region_lo, region_hi;
-static bool alt_screen;     // プログラムが代わりの画面（curses）に切り替えたまま（終わったときに戻す）     // EL0 が読み書きしてよい範囲（システムコールのポインタを確かめる）
+static bool alt_screen;
+static char nav_url[512];   // SYS_GO の移る先
+static bool nav_back;
+
+const char *sandbox_nav(bool *back)
+{
+    if (back)
+        *back = nav_back;
+    return nav_url;
+}     // プログラムが代わりの画面（curses）に切り替えたまま（終わったときに戻す）     // EL0 が読み書きしてよい範囲（システムコールのポインタを確かめる）
 
 void sandbox_eret(uint64_t entry, uint64_t sp, uint64_t arg);   // vectors.S（戻ってこない）
 void __clear_cache(void *begin, void *end);         // 命令キャッシュとデータキャッシュの整合（cc/rt/clear_cache.c）
@@ -184,6 +194,16 @@ void sandbox_handle_sync(struct trap_frame *f)
             sys_sleep(a0);
             f->x[0] = 0;
             return;
+        case SYS_GO:                // go(url, len, back): ページを終えて移る
+            nav_back = a2 != 0;
+            nav_url[0] = 0;
+            if (!nav_back && (a1 == 0 || a1 >= sizeof nav_url || !in_region(a0, a1)))
+                return;             // 長すぎる・おかしい URL は誤り（-1）を返して続ける
+            if (!nav_back) {
+                memcpy(nav_url, (const void *)a0, a1);
+                nav_url[a1] = 0;
+            }
+            leave(SANDBOX_NAVIGATE);
         case SYS_RANDOM:
             if (a1 <= 256 && in_region(a0, a1))
                 f->x[0] = getentropy((void *)a0, a1) == 0 ? 0 : (uint64_t)-1;

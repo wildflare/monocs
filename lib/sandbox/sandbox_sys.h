@@ -11,6 +11,7 @@
 #define SB_SYS_CLOCK    4       // clock(0 = 実時間、1 = 起動から) → ナノ秒
 #define SB_SYS_SLEEP    5       // sleep(ナノ秒)
 #define SB_SYS_RANDOM   6       // random(buf, len ≤ 256) → 0 か -1
+#define SB_SYS_GO       7       // go(url, len, back): ページを終えて移る・戻る（C の Web。cweb.h）
 
 // カーネルが入口（__sandbox_start）の x0 に渡すもの（データの領域の頭に置く）
 struct sandbox_info {

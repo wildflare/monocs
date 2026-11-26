@@ -10,7 +10,11 @@ enum sandbox_result {
     SANDBOX_INTERRUPTED,    // Ctrl-C
     SANDBOX_TIMEDOUT,       // 時間の上限
     SANDBOX_NOT_STARTED,    // 入れなかった（メモリ・コア 0 以外・入れ子・アプリの実行中）
+    SANDBOX_NAVIGATE,       // SB_SYS_GO（C の Web: ほかのページへ移る・戻る。sandbox_nav で中身を見る）
 };
+
+// SANDBOX_NAVIGATE のとき: 移る先の URL（back なら戻る）
+const char *sandbox_nav(bool *back);
 
 // 領域: 頭の SANDBOX_IMAGE_SIZE がプログラム（機械語か、つないだプログラム）、その後の SANDBOX_DATA_SIZE が
 // データ（頭に struct sandbox_info と引数、残りがヒープ）とスタック（上端から）
