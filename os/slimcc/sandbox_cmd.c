@@ -2,13 +2,15 @@
 //   sandbox FILE.c [引数...]
 // FILE.c と、サンドボックスの中の C ライブラリ（/usr/lib/sandbox/*.c。lib/sandbox）をコンパイルし、サンドボックスの
 // 領域の中でつなぐ（OS の関数にはつながない: 足りない関数は undefined symbol になる）。入口は __sandbox_start
-// （lib/sandbox/start.c）。今のライブラリは、画面に書く（printf など）・文字列・malloc・exit だけ。
+// （lib/sandbox/start.c）。コンパイルの結果は run と同じキャッシュ（os/slimcc/cache.c）に、サンドボックス用の印を付けて
+// 覚える（ふつうのアプリの結果とは混ざらない）。
 // 終了の値: プログラムの値、止められたら 139（不正なアクセス）・130（Ctrl-C）・124（時間の上限）、動かせなければ 1。
 #include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "libslimcc.h"
+#include "cache.h"
 #include "../kernel/sandbox.h"
 #include "../drivers/uart.h"
 
@@ -51,7 +53,11 @@ int sandbox_cmd(int argc, char **argv)
     uint8_t *region = nullptr;
     uint32_t intr0 = uart_shell_interrupts();     // コンパイルの途中の Ctrl-C でも、動かさずに止める
 
-    if (!(objs[n++] = slimcc_compile(argv[1], nullptr, &opt)))
+    // キャッシュのキー: オプションを表す文字列（ふつうのアプリの run とは違う印を頭に）
+    static const char key_prog[] = "sandbox\x1fgnu23\x1f-D_POSIX_MONOTONIC_CLOCK";
+    static const char key_lib[] = "sandbox-lib\x1fgnu23\x1f-I" LIB_DIR "\x1f-D_POSIX_MONOTONIC_CLOCK";
+    cache_begin();
+    if (!(objs[n++] = cache_compile(argv[1], &opt, key_prog)))
         goto done;
     // ライブラリの .c: 頭のフォルダと、curses/（OS の curses の写し）・libc/（wcwidth）
     static const char *const dirs[] = { LIB_DIR, LIB_DIR "/curses", LIB_DIR "/libc" };
@@ -68,7 +74,7 @@ int sandbox_cmd(int argc, char **argv)
                 continue;
             char path[300];
             snprintf(path, sizeof path, "%s/%s", dirs[k], e->d_name);
-            if (n == MAX_OBJS || !(objs[n] = slimcc_compile(path, nullptr, &lib_opt))) {
+            if (n == MAX_OBJS || !(objs[n] = cache_compile(path, &lib_opt, key_lib))) {
                 closedir(d);
                 goto done;
             }
@@ -105,6 +111,7 @@ int sandbox_cmd(int argc, char **argv)
     case SANDBOX_NOT_STARTED: fprintf(stderr, "sandbox: cannot start\n"); r = 1; break;
     }
 done:
+    cache_end();
     if (img)
         slimcc_free_image(img);
     for (int i = 0; i < n; i++)
