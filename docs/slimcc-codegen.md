@@ -591,6 +591,11 @@ sh tools/slimcc/devbench.sh build/kernel8.img build/kslim/kernel8.img   # 両方
 - 効果: Pi 5 で codegen.c のコンパイルの命令の数 slimcc で作った slimcc 696.5 → 691.8M、GCC で作った slimcc
   477.1 → 472.9M。実機のカーネルの中のコンパイラ parse.c 514 → 512M、codegen.c 1,197 → 1,185M（1.0%）。
   出すコードは変わらない（cmp_s.sh）。確かめ: make cc-test、verify.sh（quick なし。すべて一致）。
+- 試して戻したもの（2026-11-27）:
+  - ir_fingerprint で、32 ビットに収まる欄を 2 つずつ 64 ビットにまとめてから混ぜる（混ぜる回数 14 → 7）。GCC で作った slimcc は
+    命令が 0.15% 減ったが、slimcc で作った slimcc は、まとめるための拡張・ずらしの分で 0.2% 増えた。
+  - add_line_numbers（字句の行番号。改行を 1 バイトずつ数える。Pi 5 で 1.9%）を 8 バイトずつ（SWAR）数える。トークンの間は
+    たいてい数バイトなので 8 バイトの道をあまり通らず、時間は揺れの範囲で変わらなかった。
 - 残り: ir_fingerprint（2%。最適化の回ごとに中間表現が変わったかを、全部の命令のすべての欄を混ぜて見る。混ぜ方を
   弱くすると、変わったのに同じと見誤って出すコードが変わるおそれ）、ir_intervals・ir_linear_scan（熱いところが散らばる）、
   ir_count_uses（1 回にまとめる形は遅かった）。
