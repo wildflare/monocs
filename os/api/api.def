@@ -150,7 +150,7 @@ API(napms) API(beep) API(flash) API(has_colors) API(can_change_color) API(start_
 API(use_default_colors) API(assume_default_colors) API(init_pair) API(pair_content) API(wrefresh)
 API(wnoutrefresh) API(doupdate) API(redrawwin) API(wmove) API(waddch) API(waddnstr) API(waddstr)
 API(wprintw) API(vw_printw) API(printw) API(mvprintw) API(mvwprintw) API(wclrtoeol) API(wclrtobot)
-API(werase) API(wclear) API(whline) API(wvline) API(wattron) API(wattroff) API(wattrset)
+API(werase) API(wclear) API(whline) API(wvline) API(wborder) API(box) API(wattron) API(wattroff) API(wattrset)
 API(wattr_on) API(wattr_off) API(wattr_get) API(wattr_set) API(wcolor_set) API(wbkgdset) API(winch)
 API(getcurx) API(getcury) API(getmaxx) API(getmaxy) API(getbegx) API(getbegy) API(wgetch)
 API(wget_wch) API(ungetch) API(flushinp) API(define_key) API(key_defined) API(keyname) API(has_key)

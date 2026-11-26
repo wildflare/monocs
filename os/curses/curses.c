@@ -539,6 +539,37 @@ int wvline(WINDOW *w, chtype ch, int n)
     return OK;
 }
 
+// 枠（ncurses と同じ。2026-11-26）: 0 を渡したところは既定の罫線の文字（ACS_*）。カーソルは動かさない
+int wborder(WINDOW *w, chtype ls, chtype rs, chtype ts, chtype bs, chtype tl, chtype tr, chtype bl, chtype br)
+{
+    if (!w || w->rows < 1 || w->cols < 1)
+        return ERR;
+    int y = w->cy, x = w->cx, r = w->rows - 1, c = w->cols - 1;
+    w->cy = 0, w->cx = 1;
+    draw_line(w, ts, c - 1, false, ACS_HLINE);
+    w->cy = r, w->cx = 1;
+    draw_line(w, bs, c - 1, false, ACS_HLINE);
+    w->cy = 1, w->cx = 0;
+    draw_line(w, ls, r - 1, true, ACS_VLINE);
+    w->cy = 1, w->cx = c;
+    draw_line(w, rs, r - 1, true, ACS_VLINE);
+    static const chtype def[4] = { ACS_ULCORNER, ACS_URCORNER, ACS_LLCORNER, ACS_LRCORNER };
+    chtype corner[4] = { tl, tr, bl, br };
+    int cy[4] = { 0, 0, r, r }, cx[4] = { 0, c, 0, c };
+    for (int i = 0; i < 4; i++) {
+        w->cy = cy[i], w->cx = cx[i];
+        waddch(w, (corner[i] & A_CHARTEXT) ? corner[i] : corner[i] | def[i]);
+    }
+    w->cy = y;
+    w->cx = x;
+    return OK;
+}
+
+int box(WINDOW *w, chtype verch, chtype horch)
+{
+    return wborder(w, verch, verch, horch, horch, 0, 0, 0, 0);
+}
+
 chtype winch(WINDOW *w)
 {
     if (!w)

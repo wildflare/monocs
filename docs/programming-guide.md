@@ -439,11 +439,12 @@ Linux と同じく `ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws)`（`ws.ws_row`・`ws.w
 - Enter は `'\n'` で届く（ncurses の既定の `nl()`。`nonl()` を呼ぶと `'\r'`。2026-11-14 から。それまではいつも `'\r'`）。
 - `def_prog_mode`・`reset_prog_mode`（system() の前後。→ 6.4）。
 - 使えるのは **stdscr だけ**（`newwin` などの窓はない）、**スクロール（scrollok）はしない**。
-- UTF-8・全角、256 色・既定の色（-1）、罫線（ACS）、マウス（押した・離した。クリック・ダブルクリックは作らない）、`define_key`、`ungetch`。
+- UTF-8・全角、256 色・既定の色（-1）、罫線（ACS。枠の `box`・`border`・`wborder` と `hline`・`vline` も。2026-11-26）、マウス（押した・離した。クリック・ダブルクリックは作らない）、`define_key`、`ungetch`。
 - `KEY_RESIZE` は telnet のときだけ届く。
 - `raw()` の間は Ctrl-C がキーになり、Ctrl-\ でアプリが止まる。
 - endwin を呼ばずに終わっても（例外・Ctrl-\ でも）、OS が端末を元に戻す。
 - 例: `samples/curses_demo.c`、`/usr/bin/less.c`、エディタ mi（`/root/apps/mi`）。
+- サンドボックス（`sandbox FILE.c`。docs/sandbox.md）の中でも、同じ curses が使える（OS の curses.c をそのまま写したもの）。サンドボックスの中では、Ctrl-C はキーとして届かず、いつも止める。
 
 ---
 

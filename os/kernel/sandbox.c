@@ -45,7 +45,8 @@ static enum sandbox_result result;
 static int64_t exit_status;
 static uint32_t intr_at_start;
 static uint64_t deadline_us;
-static uintptr_t region_lo, region_hi;     // EL0 が読み書きしてよい範囲（システムコールのポインタを確かめる）
+static uintptr_t region_lo, region_hi;
+static bool alt_screen;     // プログラムが代わりの画面（curses）に切り替えたまま（終わったときに戻す）     // EL0 が読み書きしてよい範囲（システムコールのポインタを確かめる）
 
 void sandbox_eret(uint64_t entry, uint64_t sp, uint64_t arg);   // vectors.S（戻ってこない）
 void __clear_cache(void *begin, void *end);         // 命令キャッシュとデータキャッシュの整合（cc/rt/clear_cache.c）
@@ -144,6 +145,16 @@ void sandbox_handle_sync(struct trap_frame *f)
         switch (no) {
         case SYS_WRITE:             // write(1 か 2, buf, len)
             if ((a0 == 1 || a0 == 2) && in_region(a1, a2)) {
+                // 代わりの画面への切り替え・戻し（curses の initscr・endwin）を見ておく
+                const char *last_on = nullptr, *last_off = nullptr;
+                const char *end = (const char *)a1 + a2;
+                for (const char *p = (const char *)a1; (p = memmem(p, (size_t)(end - p), "\x1b[?1049", 7)); p++)
+                    if (p + 7 < end && p[7] == 'h')
+                        last_on = p;
+                    else if (p + 7 < end && p[7] == 'l')
+                        last_off = p;
+                if (last_on || last_off)
+                    alt_screen = last_on > last_off;
                 irq_on();
                 fwrite((const void *)a1, 1, a2, a0 == 1 ? stdout : stderr);
                 fflush(a0 == 1 ? stdout : stderr);
@@ -251,12 +262,18 @@ enum sandbox_result sandbox_enter(uint8_t *region, uint64_t entry, bool writable
     intr_at_start = uart_shell_interrupts();
     deadline_us = timeout_ms ? timer_now_us() + (uint64_t)timeout_ms * 1000 : 0;
     exit_status = 0;
+    alt_screen = false;
     if (setjmp(jmp) == 0) {
         active = true;
         sandbox_eret(entry, (uint64_t)data_end, (uint64_t)in);   // スタックはデータの領域の上端から
     }
     // ここへは leave の longjmp で戻る（例外の処理の中から。割り込みは止まっている）
     write_sysreg(tpidr_el0, sandbox_kernel_tp);
+    if (alt_screen) {           // curses の画面のまま終わった（止められた）: 端末を戻す（os/curses/curses.c と同じ）
+        fputs("\x1b[0m\x1b[?25h\x1b[?2004l\x1b[>4;0m\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l"
+              "\x1b[?1l\x1b>\x1b[?1049l", stdout);
+        alt_screen = false;
+    }
     if (result == SANDBOX_INTERRUPTED) {    // 残っている入力（Ctrl-C の文字も）を捨てる（Linux の ISIG と同じ。NOFLSH なし）
         char junk[64];
         while (uart_read(junk, sizeof junk, 0))

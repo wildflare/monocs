@@ -53,25 +53,29 @@ int sandbox_cmd(int argc, char **argv)
 
     if (!(objs[n++] = slimcc_compile(argv[1], nullptr, &opt)))
         goto done;
-    DIR *d = opendir(LIB_DIR);
-    if (!d) {
-        fprintf(stderr, "sandbox: %s: cannot open the sandbox's C library\n", LIB_DIR);
-        goto done;
-    }
-    struct dirent *e;
-    while ((e = readdir(d))) {
-        size_t len = strlen(e->d_name);
-        if (len < 3 || strcmp(e->d_name + len - 2, ".c"))
-            continue;
-        char path[300];
-        snprintf(path, sizeof path, "%s/%s", LIB_DIR, e->d_name);
-        if (n == MAX_OBJS || !(objs[n] = slimcc_compile(path, nullptr, &lib_opt))) {
-            closedir(d);
+    // ライブラリの .c: 頭のフォルダと、curses/（OS の curses の写し）・libc/（wcwidth）
+    static const char *const dirs[] = { LIB_DIR, LIB_DIR "/curses", LIB_DIR "/libc" };
+    for (size_t k = 0; k < sizeof dirs / sizeof dirs[0]; k++) {
+        DIR *d = opendir(dirs[k]);
+        if (!d) {
+            fprintf(stderr, "sandbox: %s: cannot open the sandbox's C library\n", dirs[k]);
             goto done;
         }
-        n++;
+        struct dirent *e;
+        while ((e = readdir(d))) {
+            size_t len = strlen(e->d_name);
+            if (len < 3 || strcmp(e->d_name + len - 2, ".c"))
+                continue;
+            char path[300];
+            snprintf(path, sizeof path, "%s/%s", dirs[k], e->d_name);
+            if (n == MAX_OBJS || !(objs[n] = slimcc_compile(path, nullptr, &lib_opt))) {
+                closedir(d);
+                goto done;
+            }
+            n++;
+        }
+        closedir(d);
     }
-    closedir(d);
 
     region = sandbox_region_alloc();
     if (!region) {

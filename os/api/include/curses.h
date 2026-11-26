@@ -306,6 +306,8 @@ int werase(WINDOW *win);
 int wclear(WINDOW *win);
 int whline(WINDOW *win, chtype ch, int n);
 int wvline(WINDOW *win, chtype ch, int n);
+int wborder(WINDOW *win, chtype ls, chtype rs, chtype ts, chtype bs, chtype tl, chtype tr, chtype bl, chtype br);
+int box(WINDOW *win, chtype verch, chtype horch);   // 枠（0 で既定の罫線。ncurses と同じ。2026-11-26）
 int wattron(WINDOW *win, int attrs);
 int wattroff(WINDOW *win, int attrs);
 int wattrset(WINDOW *win, int attrs);
@@ -360,6 +362,9 @@ bool is_term_resized(int lines, int columns);
 #define clear()                 wclear(stdscr)
 #define hline(ch, n)            whline(stdscr, (ch), (n))
 #define vline(ch, n)            wvline(stdscr, (ch), (n))
+#define border(ls, rs, ts, bs, tl, tr, bl, br) wborder(stdscr, (ls), (rs), (ts), (bs), (tl), (tr), (bl), (br))
+#define mvwhline(w, y, x, ch, n) (wmove((w), (y), (x)) == ERR ? ERR : whline((w), (ch), (n)))
+#define mvwvline(w, y, x, ch, n) (wmove((w), (y), (x)) == ERR ? ERR : wvline((w), (ch), (n)))
 #define mvhline(y, x, ch, n)    (wmove(stdscr, (y), (x)) == ERR ? ERR : whline(stdscr, (ch), (n)))
 #define mvvline(y, x, ch, n)    (wmove(stdscr, (y), (x)) == ERR ? ERR : wvline(stdscr, (ch), (n)))
 #define attron(a)               wattron(stdscr, (a))
