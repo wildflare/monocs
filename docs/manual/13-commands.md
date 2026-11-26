@@ -34,6 +34,7 @@
 | `cc --report [-l名前] FILE.c…` | 作らずに、そのプログラムが使う OS の機能（ファイルを消す、ネットワーク、ほかのプログラム、SD カード・再起動などの機械の設定、ほかのコア、ハードウェアのライブラリ）と、インラインアセンブリ・周辺機器の番地の直書きを出す。人が作ったコードを動かす前に。ポインタで OS のメモリを直接いじるような手は出ないので、悪意は防げない |
 | `ld -o kernel8.img FILE.o… LIB.a…` | リンカ（Monocs のカーネルを作る専用） |
 | `cache [clear [NAME\|PATH]…]` | コンパイルのキャッシュ |
+| `sandbox FILE.c [引数]` | サンドボックス（EL0）で動かす。OS のメモリ・ハードウェア・ファイル・ネットワークには手を出せない。使えるのは画面に書く（printf など）・文字列・malloc・exit だけ（作っている途中。docs/sandbox.md） |
 | `svc [list\|start FILE\|stop NAME]` | サービス |
 | `perf [-e EV,…] [-c] CMD…`・`perf -l`・`perf record …` | 性能カウンタ |
 

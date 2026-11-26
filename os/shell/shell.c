@@ -39,6 +39,8 @@
 #include "../kernel/klog_file.h"
 #include "../libc/console.h"
 #include "../kernel/app.h"
+#include "../kernel/sandbox.h"
+int sandbox_cmd(int argc, char **argv);    // os/slimcc/sandbox_cmd.c
 #include "../kernel/lock.h"
 #include "../kernel/sysreg.h"
 #include "../net/tcp_api.h"
@@ -362,6 +364,45 @@ static int sdtest_hs_fn(void *arg)
 
 // SDHOST のドライバを、区画の外の空いているセクタで試す（os/drivers/sd_test.c）。
 // sdtest hs [N]: High Speed（50MHz）を、SDHOST のまま区画の最後の空きクラスタで試す
+// sbtest（2026-11-26。開発用）: サンドボックス（os/kernel/sandbox.c）の段階 2 を試す。小さな機械語を EL0 で動かし、
+// 終わる・OS のメモリ・OS のコード・周辺機器・特権の命令・自分のコードへの書き込み・回り続ける（時間の上限）で戻るか
+static int cmd_sbtest(int, char **)
+{
+    static const uint32_t exit42[] = { 0xD2800540, 0xD4000001 };               // mov x0, #42; svc #0
+    static const uint32_t stack[] = { 0xD28000E0, 0xF81F0FE0, 0xD2800000,     // mov x0, #7; str x0, [sp, #-16]!; mov x0, #0
+                                      0xF84107E0, 0xD4000001 };                // ldr x0, [sp], #16; svc #0
+    static const uint32_t rd_kernel[] = { 0xD2A00101, 0xF9400020, 0xD4000001 }; // mov x1, #0x80000; ldr x0, [x1]
+    static const uint32_t run_kernel[] = { 0xD2A00101, 0xD61F0020 };           // mov x1, #0x80000; br x1
+    static const uint32_t rd_gpio[] = { 0xD2A7E401, 0xB9400020, 0xD4000001 };   // mov x1, #0x3F200000; ldr w0, [x1]
+    static const uint32_t priv[] = { 0xD50342DF, 0xD4000001 };                 // msr daifset, #2
+    static const uint32_t wr_code[] = { 0x10000001, 0xF9000020, 0xD4000001 };  // adr x1, .; str x0, [x1]
+    static const uint32_t bad_svc[] = { 0xD2800C68, 0xD4000001 };              // mov x8, #99; svc #0（ない番号）
+    static const uint32_t loop[] = { 0x14000000 };                             // b .
+    static const struct { const char *name; const uint32_t *code; size_t n; enum sandbox_result want; int64_t st; } t[] = {
+        { "exit 42", exit42, 2, SANDBOX_EXITED, 42 },
+        { "use the stack", stack, 5, SANDBOX_EXITED, 7 },
+        { "read kernel memory", rd_kernel, 3, SANDBOX_FAULTED, 0 },
+        { "run kernel code", run_kernel, 2, SANDBOX_FAULTED, 0 },
+        { "read GPIO registers", rd_gpio, 3, SANDBOX_FAULTED, 0 },
+        { "privileged instruction", priv, 2, SANDBOX_FAULTED, 0 },
+        { "write own code", wr_code, 3, SANDBOX_FAULTED, 0 },
+        { "unknown system call", bad_svc, 2, SANDBOX_FAULTED, 0 },
+        { "endless loop (timeout 300 ms)", loop, 1, SANDBOX_TIMEDOUT, 0 },
+    };
+    int ng = 0;
+    for (size_t i = 0; i < sizeof t / sizeof t[0]; i++) {
+        int64_t st = -1;
+        uint64_t t0 = timer_now_us();
+        enum sandbox_result r = sandbox_run(t[i].code, t[i].n, 300, &st);
+        bool ok = r == t[i].want && (r != SANDBOX_EXITED || st == t[i].st);
+        ng += !ok;
+        printf("%s: %s (result %d, status %lld, %llu us)\n", ok ? "ok" : "NG", t[i].name, (int)r, (long long)st,
+               (unsigned long long)(timer_now_us() - t0));
+    }
+    printf(ng ? "sbtest: %d NG\n" : "sbtest: all ok\n", ng);
+    return ng ? 1 : 0;
+}
+
 static int cmd_sdtest(int argc, char **argv)
 {
     if (argc > 1 && !strcmp(argv[1], "hs")) {
@@ -1024,6 +1065,8 @@ static const struct {
     { "halt",   cmd_poweroff, nullptr },
     { "mem",    cmd_mem,    "mem [-r]        ヒープ（いちばん多かったときも。-r で戻す）とファイルのキャッシュの使用量" },
     { "wifi",   cmd_wifi,   "wifi [start|scan|connect|disconnect|status]  内蔵 Wi-Fi（connect は /etc/wpa_supplicant.conf か SSID PASS）" },
+    { "sandbox", sandbox_cmd, "sandbox FILE.c [ARGS]  サンドボックス（EL0）で動かす（画面に書く・文字列・malloc だけ。OS のメモリ・ファイル・ネットワークは使えない）" },
+    { "sbtest", cmd_sbtest, "sbtest          サンドボックス（EL0）の段階 2 を試す（開発用）" },
     { "sdtest", cmd_sdtest, "sdtest [N] | sdtest hs [N]  SD カードの SDHOST のドライバを試す（hs: 50MHz を、区画の最後の空きクラスタで）" },
     { "clock",  cmd_clock,  "clock           CPU のクロック（ファームウェアの値と実測）と温度" },
     { "usb",    cmd_usb,    "usb             USB のコンソール（CDC-ACM）とネットワーク（CDC-ECM、lwIP）の状態" },

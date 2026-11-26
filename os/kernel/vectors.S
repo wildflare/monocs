@@ -11,6 +11,7 @@
 #define FRAME_FAR       272
 #define FRAME_FPSR      280
 #define FRAME_FPCR      288
+#define FRAME_SP0       296     // 下位 EL から来たときの SP_EL0（ネストした例外が SP_EL0 を作業用に使うので、退避する）
 #define FRAME_Q         304
 #define FRAME_SIZE      816
 
@@ -30,6 +31,25 @@
 // TPIDRRO_EL0 に x0・x1 を置く。
 #define OVERFLOW_PAGES  18      // ガードページ 64KB + 8KB（例外のフレームを置ける余裕）
 #define OVERFLOW_STACK  16384   // 非常用のスタックの大きさ（exception.c と一致させる）
+
+// 下位 EL（AArch64。サンドボックスの EL0。os/kernel/sandbox.c）から: SP_EL0 をフレームに退避し、EL0 が使っていた
+// TPIDR_EL0 を sandbox_user_tp に置いて、カーネルの TPIDR_EL0（コアごとの TLS。sandbox_kernel_tp）に戻す。
+// サンドボックスはコア 0 だけで動くので、1 組の変数でよい。戻るとき（exception_common の終わり）に逆をする
+.macro ventry_lower type
+    .balign 0x80
+    sub     sp, sp, #FRAME_SIZE
+    stp     x0, x1, [sp, #0]
+    mrs     x0, sp_el0
+    str     x0, [sp, #FRAME_SP0]
+    mrs     x0, tpidr_el0
+    adrp    x1, sandbox_user_tp
+    str     x0, [x1, :lo12:sandbox_user_tp]
+    adrp    x1, sandbox_kernel_tp
+    ldr     x0, [x1, :lo12:sandbox_kernel_tp]
+    msr     tpidr_el0, x0
+    mov     x0, #\type
+    b       exception_common
+.endm
 
 .macro ventry type
     .balign 0x80
@@ -74,11 +94,11 @@ exception_vectors:
     ventry_spx  EXC_IRQ
     ventry_spx  EXC_FIQ
     ventry_spx  EXC_SERROR
-    // 下位 EL（AArch64）
-    ventry  EXC_SYNC + 8
-    ventry  EXC_IRQ + 8
-    ventry  EXC_FIQ + 8
-    ventry  EXC_SERROR + 8
+    // 下位 EL（AArch64。サンドボックスの EL0）
+    ventry_lower  EXC_SYNC + 8
+    ventry_lower  EXC_IRQ + 8
+    ventry_lower  EXC_FIQ + 8
+    ventry_lower  EXC_SERROR + 8
     // 下位 EL（AArch32）
     ventry  EXC_SYNC + 12
     ventry  EXC_IRQ + 12
@@ -173,6 +193,16 @@ exception_common:
     ldp     x1, x2, [sp, #FRAME_FPSR]
     msr     fpsr, x1
     msr     fpcr, x2
+    // EL0（SPSR の M[3:0] = 0）へ戻るとき: SP_EL0 と、EL0 の TPIDR_EL0 を戻す（ventry_lower の逆）
+    ldr     x1, [sp, #FRAME_SPSR]
+    tst     x1, #0xF
+    b.ne    2f
+    ldr     x1, [sp, #FRAME_SP0]
+    msr     sp_el0, x1
+    adrp    x1, sandbox_user_tp
+    ldr     x1, [x1, :lo12:sandbox_user_tp]
+    msr     tpidr_el0, x1
+2:
     ldp     x1, x2, [sp, #FRAME_ELR]
     msr     elr_el1, x1
     msr     spsr_el1, x2
@@ -194,4 +224,84 @@ exception_common:
     ldp     x28, x29, [sp, #224]
     ldr     x30, [sp, #240]
     add     sp, sp, #FRAME_SIZE
+    eret
+
+// サンドボックスに入る（os/kernel/sandbox.c）: x0 = 入口、x1 = スタックの上端、x2 = 入口の x0 に渡すもの。割り込みを止めてから、SP_EL0・
+// ELR・SPSR（EL0t、DAIF は全部外す = EL0 では割り込みを受ける）を決め、TPIDR_EL0 を 0 に、汎用・FP のレジスタを
+// 0 にして（カーネルの値を見せない）eret する。戻ってこない（出るときは sandbox.c が longjmp する）
+    .text
+    .global sandbox_eret
+sandbox_eret:
+    msr     daifset, #0xf
+    msr     tpidrro_el0, x2             // 入口の x0 に渡すもの（レジスタを 0 にした後で読む）
+    msr     sp_el0, x1
+    msr     elr_el1, x0
+    msr     spsr_el1, xzr
+    msr     tpidr_el0, xzr
+    eor     v0.16b, v0.16b, v0.16b
+    eor     v1.16b, v1.16b, v1.16b
+    eor     v2.16b, v2.16b, v2.16b
+    eor     v3.16b, v3.16b, v3.16b
+    eor     v4.16b, v4.16b, v4.16b
+    eor     v5.16b, v5.16b, v5.16b
+    eor     v6.16b, v6.16b, v6.16b
+    eor     v7.16b, v7.16b, v7.16b
+    eor     v8.16b, v8.16b, v8.16b
+    eor     v9.16b, v9.16b, v9.16b
+    eor     v10.16b, v10.16b, v10.16b
+    eor     v11.16b, v11.16b, v11.16b
+    eor     v12.16b, v12.16b, v12.16b
+    eor     v13.16b, v13.16b, v13.16b
+    eor     v14.16b, v14.16b, v14.16b
+    eor     v15.16b, v15.16b, v15.16b
+    eor     v16.16b, v16.16b, v16.16b
+    eor     v17.16b, v17.16b, v17.16b
+    eor     v18.16b, v18.16b, v18.16b
+    eor     v19.16b, v19.16b, v19.16b
+    eor     v20.16b, v20.16b, v20.16b
+    eor     v21.16b, v21.16b, v21.16b
+    eor     v22.16b, v22.16b, v22.16b
+    eor     v23.16b, v23.16b, v23.16b
+    eor     v24.16b, v24.16b, v24.16b
+    eor     v25.16b, v25.16b, v25.16b
+    eor     v26.16b, v26.16b, v26.16b
+    eor     v27.16b, v27.16b, v27.16b
+    eor     v28.16b, v28.16b, v28.16b
+    eor     v29.16b, v29.16b, v29.16b
+    eor     v30.16b, v30.16b, v30.16b
+    eor     v31.16b, v31.16b, v31.16b
+    msr     fpsr, xzr
+    msr     fpcr, xzr
+    mov     x0, xzr
+    mov     x1, xzr
+    mov     x2, xzr
+    mov     x3, xzr
+    mov     x4, xzr
+    mov     x5, xzr
+    mov     x6, xzr
+    mov     x7, xzr
+    mov     x8, xzr
+    mov     x9, xzr
+    mov     x10, xzr
+    mov     x11, xzr
+    mov     x12, xzr
+    mov     x13, xzr
+    mov     x14, xzr
+    mov     x15, xzr
+    mov     x16, xzr
+    mov     x17, xzr
+    mov     x18, xzr
+    mov     x19, xzr
+    mov     x20, xzr
+    mov     x21, xzr
+    mov     x22, xzr
+    mov     x23, xzr
+    mov     x24, xzr
+    mov     x25, xzr
+    mov     x26, xzr
+    mov     x27, xzr
+    mov     x28, xzr
+    mov     x29, xzr
+    mov     x30, xzr
+    mrs     x0, tpidrro_el0
     eret

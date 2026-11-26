@@ -46,8 +46,18 @@
 #define DESC_PXN            (1UL << 53)
 #define DESC_UXN            (1UL << 54)
 
-#define ATTR_NORMAL         (DESC_ATTR(MAIR_IDX_NORMAL) | DESC_AP_EL1_RW | DESC_SH_INNER | DESC_AF)
-#define ATTR_NORMAL_RO      (DESC_ATTR(MAIR_IDX_NORMAL) | DESC_AP_EL1_RO | DESC_SH_INNER | DESC_AF)
+// RAM は EL0 から実行させない（UXN。2026-11-26、サンドボックスのため。AP の 00・10 は EL0 のデータの読み書きを
+// 止めるが、命令を読むのは UXN で止める（D8.4.2））。EL1 には効かない
+#define ATTR_NORMAL         (DESC_ATTR(MAIR_IDX_NORMAL) | DESC_AP_EL1_RW | DESC_SH_INNER | DESC_AF | DESC_UXN)
+#define ATTR_NORMAL_RO      (DESC_ATTR(MAIR_IDX_NORMAL) | DESC_AP_EL1_RO | DESC_SH_INNER | DESC_AF | DESC_UXN)
+// サンドボックス（os/kernel/sandbox.c）: AP[2:1] = 01 は EL1・EL0 とも読み書き、11 は両方とも読み出しだけ（D8.4.1）。
+// EL0 から書けるメモリは EL1 からは実行できない（D8.4.2 の暗黙の PXN）が、はっきり PXN も立てる
+#define DESC_AP_ALL_RW      (1UL << 6)
+#define DESC_AP_ALL_RO      (3UL << 6)
+#define ATTR_SANDBOX_CODE   (DESC_ATTR(MAIR_IDX_NORMAL) | DESC_AP_ALL_RO | DESC_SH_INNER | DESC_AF | DESC_PXN)
+// つないだプログラム（コード・データ・GOT がひと続き。cc/memlink.c）: EL0 が読み書き・実行（EL1 は実行しない）
+#define ATTR_SANDBOX_IMAGE  (DESC_ATTR(MAIR_IDX_NORMAL) | DESC_AP_ALL_RW | DESC_SH_INNER | DESC_AF | DESC_PXN)
+#define ATTR_SANDBOX_DATA   (DESC_ATTR(MAIR_IDX_NORMAL) | DESC_AP_ALL_RW | DESC_SH_INNER | DESC_AF | DESC_PXN | DESC_UXN)
 #define ATTR_DEVICE         (DESC_ATTR(MAIR_IDX_DEVICE) | DESC_AP_EL1_RW | DESC_AF | DESC_PXN | DESC_UXN)
 
 // TCR_EL1（D13.2.131）
@@ -170,4 +180,25 @@ void mmu_map_page0(bool on)
     dsb_sy();
     __asm__ volatile("tlbi vmalle1\n\tdsb sy" ::: "memory");
     isb();
+}
+
+// サンドボックス（os/kernel/sandbox.c）: [addr, addr + size) の 2MB のブロックを、EL0 から使える形にする・戻す。
+// どのブロックも、表に分けられていない（4KB のページにしていない）2MB のブロックであること（でなければ何もせず false）
+bool mmu_sandbox_map(uint64_t addr, uint64_t size, enum mmu_sandbox kind)
+{
+    if (addr % L2_BLOCK_SIZE || size % L2_BLOCK_SIZE || addr + size > MMU_RAM_END)
+        return false;
+    for (uint64_t a = addr; a < addr + size; a += L2_BLOCK_SIZE) {
+        uint64_t e = l2_table[a / L2_BLOCK_SIZE];
+        if (!(e & DESC_VALID) || (e & DESC_TABLE))
+            return false;
+    }
+    uint64_t attr = kind == MMU_SANDBOX_CODE    ? ATTR_SANDBOX_CODE
+                  : kind == MMU_SANDBOX_DATA    ? ATTR_SANDBOX_DATA
+                  : kind == MMU_SANDBOX_IMAGE   ? ATTR_SANDBOX_IMAGE
+                                                : ATTR_NORMAL;
+    for (uint64_t a = addr; a < addr + size; a += L2_BLOCK_SIZE)
+        l2_table[a / L2_BLOCK_SIZE] = a | attr | DESC_BLOCK | DESC_VALID;
+    __asm__ volatile("dsb ishst\n\ttlbi vmalle1is\n\tdsb ish\n\tisb" ::: "memory");
+    return true;
 }

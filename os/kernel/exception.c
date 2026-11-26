@@ -6,6 +6,7 @@
 #include <stdatomic.h>
 #include "../curses/curses_os.h"
 #include "exception.h"
+#include "sandbox.h"
 #include "watchdog.h"
 #include "lock.h"
 #include "memory.h"
@@ -257,6 +258,16 @@ void handle_exception(uint64_t type, struct trap_frame *frame)
     case EXC_SYNC:
     case EXC_SYNC + 4:
         handle_sync(type, frame);
+        return;
+    case EXC_SYNC + 8:          // EL0（サンドボックス。os/kernel/sandbox.c）から: システムコール・不正なアクセス
+        sandbox_handle_sync(frame);
+        return;
+    case EXC_IRQ + 8:           // EL0 で動いている間の割り込み（コア 0 だけがサンドボックスを動かす）
+        irq_counts[cpu_id() & 3]++;
+        core0_pc = frame->elr;
+        core0_lr = frame->x[30];
+        irq_dispatch();
+        sandbox_after_irq();    // Ctrl-C・時間の上限なら、ここから sandbox_run に戻る
         return;
     case EXC_IRQ:
         irq_counts[cpu_id() & 3]++;     // コアごとの割り込みの数（top）

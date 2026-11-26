@@ -67,7 +67,7 @@ for d in services/*/; do
 done
 # 共有のライブラリ: TLS（/usr/lib/tls）と、その中身の BearSSL（/usr/lib/bearssl。tools/tls/mklib.sh が集める）
 sh tools/tls/mklib.sh > /dev/null
-mcopy -s -i "$PART" build/lib/bearssl build/lib/tls build/lib/inflate build/lib/gpio build/lib/i2c build/lib/spi build/lib/softuart build/lib/pwm ::/usr/lib/
+mcopy -s -i "$PART" build/lib/bearssl build/lib/tls build/lib/inflate build/lib/gpio build/lib/i2c build/lib/spi build/lib/softuart build/lib/pwm build/lib/sandbox ::/usr/lib/
 # TLS が相手を確かめるための認証局の証明書（Linux と同じ場所。このイメージを作る機械のものを写す。
 # Debian の ca-certificates（Mozilla の一覧）。なければ入れない: https は使えない）
 mmd -i "$PART" ::/etc 2>/dev/null || true

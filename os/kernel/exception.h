@@ -12,7 +12,7 @@ struct trap_frame {
     uint64_t far;
     uint64_t fpsr;
     uint64_t fpcr;
-    uint64_t pad;
+    uint64_t sp0;           // 下位 EL（EL0。サンドボックス）から来たときの SP_EL0（os/kernel/sandbox.c）
     __uint128_t q[32];
 };
 
