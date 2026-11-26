@@ -4816,10 +4816,12 @@ static int ir_next_intersection(IrInst *v, IrInst *cur) {
 // v0〜v7 は引数・戻り値、v30・v31 は作業用）
 static const int ir_alloc_order[] = {9, 10, 11, 12, 13, 14, 15, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28};
 #define IR_NREGS 17
-// x0〜x7 を作業用に使う命令のない関数では、x1〜x7 も使う（ir_low_ok。x0 は番号 0 が「なし」なので使えない）
-static const int ir_alloc_order_low[] = {9, 10, 11, 12, 13, 14, 15, 1, 2, 3, 4, 5, 6, 7,
+// x0〜x7 を作業用に使う命令のない関数では、x0〜x7 も使う（ir_low_ok）。x0 は番号 0 が「なし」なので、
+// 値のレジスタの番号では IR_X0（63）で表し、出力のときに 0 にする（ir_phys。2026-11-27）
+#define IR_X0 63
+static const int ir_alloc_order_low[] = {9, 10, 11, 12, 13, 14, 15, 1, 2, 3, 4, 5, 6, 7, IR_X0,
                                          19, 20, 21, 22, 23, 24, 25, 26, 27, 28};
-#define IR_NREGS_LOW 24
+#define IR_NREGS_LOW 25
 // v29 も作業用（積和演算の 3 つ目の引数を読むため）
 static const int ir_falloc_order[] = {48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
                                       40, 41, 42, 43, 44, 45, 46, 47};
@@ -4845,8 +4847,13 @@ static const uint8_t ir_order_tab[64] = {
   [19] = 1, [20] = 1, [21] = 1, [22] = 1, [23] = 1, [24] = 1, [25] = 1, [26] = 1, [27] = 1, [28] = 1,
   [40] = 2, [41] = 2, [42] = 2, [43] = 2, [44] = 2, [45] = 2, [46] = 2, [47] = 2,
   [48] = 2, [49] = 2, [50] = 2, [51] = 2, [52] = 2, [53] = 2, [54] = 2, [55] = 2, [56] = 2, [57] = 2,
-  [58] = 2, [59] = 2, [60] = 2,
+  [58] = 2, [59] = 2, [60] = 2, [IR_X0] = 1,
 };
+
+// 引数のレジスタ x0〜x7 か（値のレジスタの番号で）
+static bool ir_is_low_reg(int r) { return (r >= 1 && r <= 7) || r == IR_X0; }
+// 引数の番号 k（0〜7）の値のレジスタの番号
+static int ir_low_reg(int k) { return k ? k : IR_X0; }
 
 // ir_is_callee_reg の表（x19〜x28・v8〜v15）
 static const bool ir_callee_tab[64] = {
@@ -4861,19 +4868,51 @@ static bool ir_is_callee_reg(int r) {
 // 線形走査（Wimmer and Franz。区間を分けず、逃がすときは区間全体）
 static bool *ir_hot_blocks(void);
 
-// x1〜x7 を値に割り当ててよいか（2026-11-16）: 関数を呼ばず、x0〜x7 を作業用・引数に使う命令がない。
-// 前は x0〜x7 をいつも割り当てず、小さな葉の関数（fnv_hash など）でも退避の要る x19〜 を使い、入口と出口で
-// 保存・復元していた（GCC は葉の関数で x0〜x7 も使う）
+// 決まったレジスタで受け渡す値（2026-11-27）: 呼び出しの引数に使って終わる値はその引数のレジスタ、
+// 呼び出しの戻り値と return する値は x0。値の番号 → 値のレジスタの番号（0 はなし）
+static uint8_t *ir_fixed_hints(void) {
+  uint8_t *preg = ir_alloc(ir_nvals + 1);
+  for (int i = 0; i < ir_norder; i++)
+    for (IrInst *in = ir_order[i]->first; in; in = in->next) {
+      if (in->op == IR_CALL) {
+        if (in->size && !in->fp && !in->ty && in->id <= ir_nvals)
+          preg[in->id] = IR_X0;
+        for (int k = 0; k < in->nargs; k++) {
+          IrInst *a = in->args[k];
+          int r = in->argregs[k];
+          if (r < 0 || r > 7 || a->fp || (in->argtys && in->argtys[k]) || a->id > ir_nvals)
+            continue;
+          if (a->end == in->pos && !preg[a->id])
+            preg[a->id] = ir_low_reg(r);
+        }
+      } else if (in->op == IR_RET) {
+        for (int k = 0; k < in->nargs && k < 8; k++)
+          if (!in->args[k]->fp && in->args[k]->id <= ir_nvals && in->args[k]->end == in->pos &&
+              !preg[in->args[k]->id])
+            preg[in->args[k]->id] = ir_low_reg(k);
+        if (!in->nargs && in->a && !in->ty && !in->a->fp && in->a->id <= ir_nvals && in->a->end == in->pos &&
+            !preg[in->a->id])
+          preg[in->a->id] = IR_X0;
+      }
+    }
+  return preg;
+}
+
+// x0〜x7 を値に割り当ててよいか（2026-11-16）: x0〜x7 を作業用に使う命令がない。前は x0〜x7 をいつも割り当てず、
+// 小さな葉の関数（fnv_hash など）でも退避の要る x19〜 を使い、入口と出口で保存・復元していた（GCC は x0〜x7 も使う）。
+// 2026-11-27 から関数を呼ぶ関数でも（呼び出しをまたぐ値は x19〜 のまま。呼び出しの引数は並列に写す ir_par_move）。
+// 構造体の引数（x0〜x7 に読み込みながら写す）・構造体の戻り値の 2 語目（IR_X1）のある関数は使わない
 static bool ir_low_ok(void) {
   for (int i = 0; i < ir_norder; i++)
     for (IrInst *in = ir_order[i]->first; in; in = in->next)
       switch (in->op) {
-      case IR_CALL: case IR_MEMCPY: case IR_ASM: case IR_ASMOUT: case IR_PARAM_STRUCT:
-      case IR_CAS: case IR_XCHG:
+      case IR_MEMCPY: case IR_ASM: case IR_ASMOUT: case IR_PARAM_STRUCT:
+      case IR_CAS: case IR_XCHG: case IR_X1:
         return false;
-      case IR_FSQRT:
-        if (!in->sqrt_nonneg)
-          return false;  // 負の数では sqrt を呼ぶ
+      case IR_CALL:
+        for (int k = 0; in->argtys && k < in->nargs; k++)
+          if (in->argtys[k])
+            return false;
         break;
       default:
         break;
@@ -4935,6 +4974,7 @@ static void ir_linear_scan(void) {
   // x1〜x7 を使うとき: 引数（PARAM）は自分の入ってくるレジスタにだけ置ける。ほかの値は、引数を全部
   // 取り出した後に始まるものだけ（まだ読んでいない引数のレジスタを壊さない）
   bool low = ir_low_ok();
+  uint8_t *preg = low ? ir_fixed_hints() : NULL;
   int param_end = -1;
   if (low)
     for (int i = 0; i < n; i++)
@@ -4987,12 +5027,12 @@ static void ir_linear_scan(void) {
     }
     if (low && !cur->fp) {
       if (cur->op == IR_PARAM) {
-        for (int r = 1; r <= 7; r++)
-          if (r != cur->imm)
-            free_until[r] = 0;
+        for (int k = 0; k <= 7; k++)
+          if (k != cur->imm)
+            free_until[ir_low_reg(k)] = 0;
       } else if (cur->start <= param_end) {
-        for (int r = 1; r <= 7; r++)
-          free_until[r] = 0;
+        for (int k = 0; k <= 7; k++)
+          free_until[ir_low_reg(k)] = 0;
       }
     }
     if (ir_has_alloca && !cur->fp)
@@ -5007,11 +5047,14 @@ static void ir_linear_scan(void) {
 
     int reg = 0;
     // 引数は、空いていれば入ってくるレジスタのまま使う（写す mov が要らない）
-    if (low && cur->op == IR_PARAM && !cur->fp && cur->imm >= 1 && cur->imm <= 7 &&
-        free_until[cur->imm] >= cur->end)
-      reg = (int)cur->imm;
+    if (low && cur->op == IR_PARAM && !cur->fp && cur->imm >= 0 && cur->imm <= 7 &&
+        free_until[ir_low_reg((int)cur->imm)] >= cur->end)
+      reg = ir_low_reg((int)cur->imm);
+    // 呼び出しの引数・戻り値・return する値は、そのレジスタ（ir_fixed_hints。2026-11-27）
+    if (!reg && low && !cur->fp && preg[cur->id] && free_until[preg[cur->id]] >= cur->end)
+      reg = preg[cur->id];
     IrInst *h = reg ? NULL : ir_resolve(cur->hint);
-    if (h && h->reg && ir_order_tab[h->reg] == (cur->fp ? 2 : 1) && (h->reg > 7 || low) &&
+    if (h && h->reg && ir_order_tab[h->reg] == (cur->fp ? 2 : 1) && (!ir_is_low_reg(h->reg) || low) &&
         free_until[h->reg] >= cur->end)
       reg = h->reg;
     // 空いているもののうち、最後に使い終わったのがいちばん前のもの（空いたばかりのレジスタをすぐ使うと、
@@ -5736,9 +5779,12 @@ static void ir_call_sym(Obj *fn) {
 }
 
 // 中間表現の値のレジスタ（型付き。ir_src・ir_dst などと同じ命令を出す）
+// 値のレジスタの番号 → 本当の番号（IR_X0 は x0）
+static int ir_phys(int r) { return r == IR_X0 ? 0 : r; }
+
 static AOp ir_srcA(IrInst *v, AOp scratch) {
   if (v->reg)
-    return aX(v->reg);
+    return aX(ir_phys(v->reg));
   if (v->op == IR_CONST && v->imm == 0)
     return aXZR();
   if (!v->spill) {
@@ -5761,7 +5807,64 @@ static AOp ir_base_srcA(IrInst *v, AOp scratch) {
   return r;
 }
 
-static AOp ir_dstA(IrInst *v) { return v->reg ? aX(v->reg) : aX(16); }
+static AOp ir_dstA(IrInst *v) { return v->reg ? aX(ir_phys(v->reg)) : aX(16); }
+
+// 並列の写し（2026-11-27）: 本当の番号 dst[i]（x0〜x7）へ値 src[i] を（imm[i] なら定数 src[i]->imm を作る）。
+// 値が x0〜x7 にもあるので、写す先がまだ読んでいない元なら後回しにし、輪は x16 で切る
+static void ir_par_move(int n, const int *dst, IrInst *const *src, const bool *imm) {
+  int sreg[16];
+  bool done[16];
+  int left = 0;
+  for (int i = 0; i < n; i++) {
+    sreg[i] = !imm[i] && src[i]->reg ? ir_phys(src[i]->reg) : -1;
+    done[i] = sreg[i] == dst[i];
+    left += !done[i];
+  }
+  while (left) {
+    bool progress = false;
+    for (int i = 0; i < n; i++) {
+      if (done[i])
+        continue;
+      bool blocked = false;
+      for (int j = 0; j < n && !blocked; j++)
+        blocked = j != i && !done[j] && sreg[j] == dst[i];
+      if (blocked)
+        continue;
+      AOp d = aX(dst[i]);
+      if (sreg[i] >= 0) {
+        E2("mov", d, aX(sreg[i]));
+      } else if (imm[i]) {
+        ir_mov_imm(d, src[i]->imm);
+      } else {
+        AOp v = ir_srcA(src[i], d);
+        if (!ao_same(v, d))
+          E2("mov", d, v);
+      }
+      done[i] = true;
+      left--;
+      progress = true;
+    }
+    if (progress)
+      continue;
+    // 輪: 写す先になっている元を 1 つ x16 に逃がす
+    for (int i = 0; i < n; i++) {
+      if (done[i] || sreg[i] < 0)
+        continue;
+      bool is_dst = false;
+      for (int j = 0; j < n; j++)
+        is_dst |= !done[j] && dst[j] == sreg[i];
+      if (!is_dst)
+        continue;
+      int r = sreg[i];
+      E2("mov", aX(16), aX(r));
+      for (int j = 0; j < n; j++)
+        if (!done[j] && sreg[j] == r)
+          sreg[j] = 16;
+      break;
+    }
+  }
+}
+
 
 static void ir_finish_dstA(IrInst *v) {
   if (v->reg || !v->spill)
@@ -5915,8 +6018,8 @@ static void ir_emit_inst1(IrInst *in, IrBlock *bb, IrBlock *next_bb) {
       return;
     }
     if (in->reg) {
-      if (in->reg != in->imm)
-        E2("mov", aX(in->reg), aX((int)in->imm));
+      if (ir_phys(in->reg) != in->imm)
+        E2("mov", aX(ir_phys(in->reg)), aX((int)in->imm));
     } else
       E2("str", aX((int)in->imm), ir_fmem(in->spill, 8, aX(16)));
     return;
@@ -5957,8 +6060,8 @@ static void ir_emit_inst1(IrInst *in, IrBlock *bb, IrBlock *next_bb) {
     }
     AOp s = ir_srcA(in->a, aX(17));
     if (dst->reg) {
-      if (!ao_same(aX(dst->reg), s))
-        E2("mov", aX(dst->reg), s);
+      if (!ao_same(aX(ir_phys(dst->reg)), s))
+        E2("mov", aX(ir_phys(dst->reg)), s);
     } else {
       E2("str", s, ir_fmem(dst->spill, 8, aX(16)));
     }
@@ -6303,11 +6406,28 @@ static void ir_emit_inst1(IrInst *in, IrBlock *bb, IrBlock *next_bb) {
         }
       }
     }
+    // 関数のポインタが x0〜x7 にあれば、引数を写す前に x17 へ
+    bool fn_x17 = false;
+    if (!in->sym && in->a->reg && ir_is_low_reg(in->a->reg)) {
+      E2("mov", aX(17), aX(ir_phys(in->a->reg)));
+      fn_x17 = true;
+    }
+    int pdst[16];
+    IrInst *psrc[16];
+    bool pimm[16];
+    int np = 0;
     for (int i = 0; i < in->nargs; i++) {
       IrInst *a = in->args[i];
       Type *aty = in->argtys ? in->argtys[i] : NULL;
       if (in->argregs[i] < 0)
         continue;
+      if (!aty && !a->fp) {
+        // 整数の引数は、最後にまとめて並列に写す（値が x0〜x7 にもあるため）
+        pdst[np] = in->argregs[i];
+        psrc[np] = a;
+        pimm[np++] = ir_arg_const(in, i);
+        continue;
+      }
       if (aty) {
         // 構造体: アドレスから読み込む（HFA は v、それ以外は x。x16 と x17 だけを使う）
         ArgInfo ai = classify(aty);
@@ -6323,22 +6443,16 @@ static void ir_emit_inst1(IrInst *in, IrBlock *bb, IrBlock *next_bb) {
         }
         continue;
       }
-      if (a->fp) {
-        AOp v = ir_fsrcA(a, 30);
-        E2("fmov", aF(in->argregs[i], a->fsz), v);
-      } else if (ir_arg_const(in, i)) {
-        ir_mov_imm(aX(in->argregs[i]), a->imm);
-      } else {
-        AOp v = ir_srcA(a, aX(16));
-        E2("mov", aX(in->argregs[i]), v);
-      }
+      AOp v = ir_fsrcA(a, 30);
+      E2("fmov", aF(in->argregs[i], a->fsz), v);
     }
+    ir_par_move(np, pdst, psrc, pimm);
     if (in->ty && is_mem_rtn(in->ty))
       ir_add_imm(aX(8), aX(29), in->rtn_slot); // 大きな構造体の戻り値の領域
     if (in->sym) {
       ir_call_sym(in->sym);
     } else {
-      AOp f = ir_base_srcA(in->a, aX(17));
+      AOp f = fn_x17 ? aX(17) : ir_base_srcA(in->a, aX(17));
       E1("blr", f);
     }
     if (in->stkargs) {
@@ -6368,7 +6482,7 @@ static void ir_emit_inst1(IrInst *in, IrBlock *bb, IrBlock *next_bb) {
     // AAPCS64 では 8 バイトより小さい戻り値の上位ビットは不定
     if (in->size < 8)
       ir_emit_extA(ir_dstA(in), aX(0), in->size, in->sign);
-    else
+    else if (!ao_same(ir_dstA(in), aX(0)))
       E2("mov", ir_dstA(in), aX(0));
     ir_finish_dstA(in);
     return;
@@ -6538,9 +6652,12 @@ static void ir_emit_inst1(IrInst *in, IrBlock *bb, IrBlock *next_bb) {
   }
   case IR_RET:
     if (in->nargs) {
-      // 語に分けた構造体（x0・x1。値は x0 には置かないので、順に写してよい）
+      // 語に分けた構造体（x0・x1。値が x0〜x7 にもあるので、並列に写す）
+      int pdst[8];
+      bool pimm[8] = {0};
       for (int k = 0; k < in->nargs; k++)
-        E2("mov", aX(k), ir_srcA(in->args[k], aX(16)));
+        pdst[k] = k;
+      ir_par_move(in->nargs, pdst, in->args, pimm);
     } else if (in->a && in->ty) {
       // 構造体: アドレスから x0・x1（HFA なら v0〜v3）に読み込む（x16・x17 だけを使う）
       ArgInfo ai = classify(in->ty);
@@ -6559,7 +6676,8 @@ static void ir_emit_inst1(IrInst *in, IrBlock *bb, IrBlock *next_bb) {
       E2("fmov", aF(0, in->a->fsz), v);
     } else if (in->a) {
       AOp v = ir_srcA(in->a, aX(16));
-      E2("mov", aX(0), v);
+      if (!ao_same(v, aX(0)))
+        E2("mov", aX(0), v);
     }
     {
       char lb[STRBUF_SZ];
