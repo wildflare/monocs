@@ -3552,8 +3552,15 @@ static void ir_fold_addresses(void) {
         }
         continue;
       }
-      if (idx->op == IR_CONST || base->op == IR_LADDR)
+      if (idx->op == IR_CONST)
         continue;
+      if (idx->op == IR_LADDR && base->op != IR_LADDR) {
+        IrInst *t = base;     // 局所変数の番地を土台に
+        base = idx;
+        idx = t;
+      }
+      // 局所変数の配列の b[i] も [番地, i] に（番地はレジスタに作る。ループの外に出せる。2026-11-27。
+      // 前は add で番地を作ってから [x] で読み書きしていた）
       in->a = base;
       in->c = idx;
       in->shift = 0;
