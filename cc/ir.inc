@@ -468,6 +468,10 @@ static IrBlock *ir_new_block(void) {
   return bb;
 }
 
+// 片付けていない置き換え（repl）があるか（2026-11-27。ir_fixup・ir_cleanup が片付けて消す。簡約と CSE の後は、
+// これがあるときだけ ir_fixup で関数全体をたどる）
+TLS static bool ir_repl_pending;
+
 static IrInst *ir_resolve(IrInst *v) {
   while (v && v->repl)
     v = v->repl;
@@ -625,6 +629,7 @@ static IrInst *ir_try_remove_trivial_phi(IrInst *phi) {
     ir_prepend(phi->bb, same);
   }
   phi->repl = same;
+  ir_repl_pending = true;
   return same;
 }
 
@@ -2879,11 +2884,13 @@ static void ir_cleanup(void) {
         }
         if (trivial && same) {
           in->repl = same;
+          ir_repl_pending = true;
           changed = true;
         }
       }
     }
   }
+  ir_repl_pending = false;
   for (int b = 0; b < ir_nblocks; b++) {
     IrBlock *bb = ir_blocks[b];
     if (!bb->reachable)
@@ -3231,6 +3238,7 @@ static IrInst *ir_simplify(IrInst *in) {
 
 // 置き換えた値をたどり、置き換えた命令を除く
 static void ir_fixup(void) {
+  ir_repl_pending = false;
   for (int b = 0; b < ir_nblocks; b++) {
     IrBlock *bb = ir_blocks[b];
     if (!bb->reachable)
@@ -3257,11 +3265,14 @@ static void ir_simplify_all(void) {
         continue;
       ir_resolve_operands(in);
       IrInst *r = ir_simplify(in);
-      if (r && r != in)
+      if (r && r != in) {
         in->repl = r;
+        ir_repl_pending = true;
+      }
     }
   }
-  ir_fixup();
+  if (ir_repl_pending)
+    ir_fixup();
 }
 
 // 支配木（Cooper, Harvey, Kennedy, "A Simple, Fast Dominance Algorithm"）
@@ -3382,6 +3393,7 @@ static void ir_cse(void) {
         }
       if (found) {
         in->repl = found;
+        ir_repl_pending = true;
         continue;
       }
       if (in->id < ir_nvals) {
@@ -3390,7 +3402,8 @@ static void ir_cse(void) {
       }
     }
   }
-  ir_fixup();
+  if (ir_repl_pending)
+    ir_fixup();
 }
 
 static bool ir_is_pure(IrInst *in) {
@@ -3505,13 +3518,15 @@ static void ir_mark_low32(void) {
                     (in->op == IR_LOAD && in->size == 4 && !in->fp) ||
                     (in->op == IR_CALL && in->size == 4 && !in->fp && !in->ty);
   }
+  // 印が外れるのは使う側から使われる側へなので、後ろから（ブロックも後ろから）たどる（2026-11-27。ir_dce と同じく
+  // 少ない回数で変わらなくなる。行き着く印は同じ）
   for (bool changed = true; changed;) {
     changed = false;
-    for (int b = 0; b < ir_nblocks; b++) {
+    for (int b = ir_nblocks - 1; b >= 0; b--) {
       IrBlock *bb = ir_blocks[b];
       if (!bb->reachable)
         continue;
-      for (IrInst *in = bb->first; in; in = in->next) {
+      for (IrInst *in = bb->last; in; in = in->prev) {
         IrInst *ops[3] = {in->a, in->b, in->c};
         for (int j = 0; j < 3 + in->nargs; j++) {
           IrInst *v = j < 3 ? ops[j] : in->args[j - 3];
@@ -3761,6 +3776,7 @@ static void ir_load_elim(void) {
             v = cur.e[x].val;
         if (v) {
           in->repl = v;
+          ir_repl_pending = true;
           changed = true;
         } else {
           ir_avail_add(&cur, in, in);
@@ -4011,6 +4027,7 @@ static bool ir_mem2reg(void) {
         v = ir_ext(v, in->size, in->sign);
         ir_m2r_end(in);
         in->repl = v;
+        ir_repl_pending = true;
         ir_remove(in);
       } else {
         IrInst *val = ir_resolve(in->b);
@@ -4173,6 +4190,7 @@ static bool ir_if_convert(void) {
       sel->sign = in->sign;
       ir_insert_before(br, sel);
       in->repl = sel;
+      ir_repl_pending = true;
     }
     br->op = IR_BR;
     br->a = NULL;

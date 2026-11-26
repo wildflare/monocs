@@ -579,3 +579,18 @@ sh tools/slimcc/devbench.sh build/kernel8.img build/kslim/kernel8.img   # 両方
   使うたびに番号を比べる分が重く、命令が増えた（696.5 → 699.7M）。
 - この探し方（Pi 5 で `perf record -F 20000 ./slimcc-stage2 -c -o /dev/null codegen.c`、`perf annotate -s 関数`）は、出すコードの
   むだと、コンパイラのやり方のむだの両方が見える。次は ir_intervals・ir_linear_scan・ir_resolve_operands・ir_fingerprint。
+
+## 21. コンパイラの中を軽くする続き（2026-11-27）
+
+- ir_mark_low32: 印が外れるのは使う側から使われる側へなので、後ろから（ブロックも後ろから）たどる（ir_dce と同じ。
+  行き着く印は同じ）。
+- ir_fixup（置き換えた命令を除き、全部の命令の入力を置き換え先に直す）: 簡約（ir_simplify_all）と CSE（ir_cse）の後に
+  毎回、関数全体をたどっていた。片付けていない置き換えがあるかの印（ir_repl_pending。repl を設定する 7 か所で立て、
+  ir_fixup・ir_cleanup の片付けで消す）を持ち、簡約と CSE の後は、印があるときだけ片付ける。ir_mem2reg のように、
+  置き換えの片付けを次の簡約の ir_fixup に任せる段があるので、「その回で置き換えたか」ではなくこの印で決める。
+- 効果: Pi 5 で codegen.c のコンパイルの命令の数 slimcc で作った slimcc 696.5 → 691.8M、GCC で作った slimcc
+  477.1 → 472.9M。実機のカーネルの中のコンパイラ parse.c 514 → 512M、codegen.c 1,197 → 1,185M（1.0%）。
+  出すコードは変わらない（cmp_s.sh）。確かめ: make cc-test、verify.sh（quick なし。すべて一致）。
+- 残り: ir_fingerprint（2%。最適化の回ごとに中間表現が変わったかを、全部の命令のすべての欄を混ぜて見る。混ぜ方を
+  弱くすると、変わったのに同じと見誤って出すコードが変わるおそれ）、ir_intervals・ir_linear_scan（熱いところが散らばる）、
+  ir_count_uses（1 回にまとめる形は遅かった）。
