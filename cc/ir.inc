@@ -4415,6 +4415,12 @@ TLS static int ir_norder;
 TLS static bool *ir_fused; // 番号 → 条件分岐とまとめた比較
 
 // 値にレジスタが要るか（使われない値、条件分岐とまとめた比較、即値として埋め込んだ定数は要らない）
+// 呼び出し in の k 番目の引数が、使う所で作る整数の定数か（0 は xzr のまま）
+static bool ir_arg_const(IrInst *in, int k) {
+  IrInst *a = in->args[k];
+  return a->op == IR_CONST && !a->fp && a->imm != 0 && !(in->argtys && in->argtys[k]);
+}
+
 static bool ir_needs_reg(IrInst *v) {
   return v && v->uses > 0 && !ir_fused[v->id] && !(v->op == IR_CONST && v->imm == 0); // 0 は xzr
 }
@@ -6101,6 +6107,9 @@ static void ir_emit_inst1(IrInst *in, IrBlock *bb, IrBlock *next_bb) {
           }
         } else if (a->fp) {
           E2("str", ir_fsrcA(a, 30), ir_memop(off, aSP(), a->fsz, aX(17)));
+        } else if (ir_arg_const(in, i)) {
+          ir_mov_imm(aX(16), a->imm);
+          E2("str", aX(16), ir_memop(off, aSP(), 8, aX(17)));
         } else {
           E2("str", ir_srcA(a, aX(16)), ir_memop(off, aSP(), 8, aX(17)));
         }
@@ -6129,6 +6138,8 @@ static void ir_emit_inst1(IrInst *in, IrBlock *bb, IrBlock *next_bb) {
       if (a->fp) {
         AOp v = ir_fsrcA(a, 30);
         E2("fmov", aF(in->argregs[i], a->fsz), v);
+      } else if (ir_arg_const(in, i)) {
+        ir_mov_imm(aX(in->argregs[i]), a->imm);
       } else {
         AOp v = ir_srcA(a, aX(16));
         E2("mov", aX(in->argregs[i]), v);
@@ -6867,6 +6878,14 @@ static bool ir_gen_fn_body(Obj *fn) {
     for (IrInst *in = ir_order[i]->first; in; in = in->next)
       if (in->b && ir_imm_operand(in, in->b))
         in->b->uses--;
+  // 呼び出しの引数の整数の定数は、x0〜x7（スタックなら x16）に直接作る（ir_arg_const。2026-11-27。前は
+  // ほかのレジスタに作ってから mov していた）。引数にだけ使う定数には、レジスタを割り当てない
+  for (int i = 0; i < ir_norder; i++)
+    for (IrInst *in = ir_order[i]->first; in; in = in->next)
+      if (in->op == IR_CALL)
+        for (int k = 0; k < in->nargs; k++)
+          if (ir_arg_const(in, k))
+            in->args[k]->uses--;
 
   ir_liveness();
   ir_intervals();
