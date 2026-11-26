@@ -2282,6 +2282,64 @@ static bool ir_switch_table(IrInst *v, IrCase *cs, int n, IrBlock *def) {
   return true;
 }
 
+// ビットの表（2026-11-27。GCC の bit test と同じ考え方）: 行き先が IR_SWBITS_TARGETS（3）個まで、下端から上端までが
+// 64 個まで、case の値が IR_SWBITS_MIN（4）個以上なら、(v - 下端) を符号なしで幅と比べて外れたら def へ、中なら
+// 行き先ごとに「その行き先になる値のビットを立てた定数」を (定数 >> idx) & 1 で調べる（tbz・tbnz になる。
+// ir_tbz_bit）。`case A: case B: … return x;` のように値が散らばって表引き（密でない）にならない switch のため
+#define IR_SWBITS_TARGETS 3
+#define IR_SWBITS_MIN 4
+
+static bool ir_switch_bits(IrInst *v, IrCase *cs, int n, IrBlock *def) {
+  if (n < 1)
+    return false;
+  // いちばん小さい下端・大きい上端（case が少ないときは並べていないので、並びに頼らない）
+  int64_t mn = cs[0].lo, mx = cs[0].hi;
+  for (int i = 1; i < n; i++) {
+    if (ir_case_unsigned ? (uint64_t)cs[i].lo < (uint64_t)mn : cs[i].lo < mn)
+      mn = cs[i].lo;
+    if (ir_case_unsigned ? (uint64_t)cs[i].hi > (uint64_t)mx : cs[i].hi > mx)
+      mx = cs[i].hi;
+  }
+  uint64_t lo = (uint64_t)mn, range = (uint64_t)mx - lo;
+  if (range >= 64)
+    return false;
+  IrBlock *targets[IR_SWBITS_TARGETS];
+  uint64_t masks[IR_SWBITS_TARGETS] = {0};
+  int nt = 0;
+  uint64_t nvals = 0;
+  for (int i = 0; i < n; i++) {
+    int k = 0;
+    while (k < nt && targets[k] != cs[i].target)
+      k++;
+    if (k == nt) {
+      if (nt == IR_SWBITS_TARGETS)
+        return false;
+      targets[nt++] = cs[i].target;
+    }
+    for (uint64_t x = (uint64_t)cs[i].lo - lo; x <= (uint64_t)cs[i].hi - lo; x++)
+      masks[k] |= 1ULL << x;
+    nvals += (uint64_t)cs[i].hi - (uint64_t)cs[i].lo + 1;
+  }
+  if (nvals < IR_SWBITS_MIN)
+    return false;
+  IrInst *idx = lo ? ir_bin(IR_SUB, v, ir_const((int64_t)lo)) : v;
+  IrInst *c = ir_bin(IR_CMP, idx, ir_const((int64_t)range));
+  c->cond = CC_HI;
+  IrBlock *in = ir_new_block();
+  ir_branch(c, def, in);
+  ir_seal(in);
+  ir_cur = in;
+  for (int k = 0; k < nt; k++) {
+    IrBlock *next = ir_new_block();
+    IrInst *bit = ir_bin(IR_AND, ir_bin(IR_SHR, ir_const((int64_t)masks[k]), idx), ir_const(1));
+    ir_branch(bit, targets[k], next);
+    ir_seal(next);
+    ir_cur = next;
+  }
+  ir_jump(def);
+  return true;
+}
+
 static void ir_switch(Node *node) {
   Type *ty = node->ctrl.cond->ty;
   if (!ir_scalar_ty(ty))
@@ -2299,12 +2357,12 @@ static void ir_switch(Node *node) {
     cs[n++] = (IrCase){eval_sign_extend(ty, cr->lo), eval_sign_extend(ty, cr->hi), ir_label_block(cr->label)};
   }
   IrBlock *def = node->ctrl.sw_default ? ir_label_block(node->ctrl.sw_default) : brk;
+  ir_case_unsigned = ty->is_unsigned || ty->kind == TY_PTR;
   if (n > IR_SWITCH_LINEAR) {
     // 範囲は重ならない（同じ値の case はコンパイルのエラー）。下端の順に並べる
-    ir_case_unsigned = ty->is_unsigned || ty->kind == TY_PTR;
     qsort(cs, n, sizeof(IrCase), ir_case_cmp);
   }
-  if (!ir_switch_table(v, cs, n, def))
+  if (!ir_switch_bits(v, cs, n, def) && !ir_switch_table(v, cs, n, def))
     ir_switch_tree(v, cs, n, def);
   ir_cur = ir_new_block(); // 本体の先頭（最初の case の前）には来ない
   ir_cur->sealed = true;

@@ -20,7 +20,7 @@ GCC 版より遅い分は、slimcc の出すコードを良くして縮める。
 
 - 2 世代目の slimcc の .text（verify.sh の最後）: 575,380 → 514,932 バイト。
 - Pi 5 の bench.sh: nbody 402ms（GCC -O2 301ms）、primes 1,025ms（1,007ms）、strhash 399ms（402ms。GCC に並んだ）。
-- 2026-11-27 に入れたもの（下の 9〜15）: 引数の定数を x0〜x7 に直接、tbz・tbnz、ccmp・cset、呼び出しのある関数でも
+- 2026-11-27 に入れたもの（下の 9〜16）: 引数の定数を x0〜x7 に直接、tbz・tbnz、ccmp・cset、呼び出しのある関数でも
   x0〜x7 を値に（いちばん効いた。3〜4%）、退避の stp・ldp、memcpy のある関数でも x0〜x5、定数の計算の直し。
   どれも main にコミット済み（GitHub には未 push）。実機は 8b4c519 のカーネルで動いている。
 
@@ -50,9 +50,7 @@ join <(awk '$3=="kernel"{print $4, $2}' slim.txt | sort) <(awk '$3=="kernel"{pri
 
 ### 次の候補（効きそうな順）
 
-1. （済み、2026-11-27。下の 15）**switch の表引き**。効き目は 0.4% と小さかった。続きは、値が散らばった
-   「いくつかの値なら」の switch（`ir_defines` などの `case IR_STORE: case IR_BR: … return false;`）をビットの表
-   1 つと比べ 1 回にする形（GCC の bit test。今は密でないので二分探索のまま）。
+1. （済み、2026-11-27。下の 15・16）**switch の表引き**とビットの表。コンパイラ自身への効き目は小さかった（0.4%・0%）。
 2. 呼び出しをまたぐ値の退避（12 の「まだ」）、構造体を渡す呼び出しのある関数でも x0〜x7。
 3. 小さなもの: csinc（`c ? x + 1 : x`）、範囲の確かめ（`x >= A && x < B` を sub と符号なしの比べ 1 つに）、
    論理即値（`and x, x, #0xff` を定数を作らずに）、`x & mask`（2^k でない）の `tst`、合流の写しの定数（`movz` + `mov`、
@@ -496,3 +494,20 @@ sh tools/slimcc/devbench.sh build/kernel8.img build/kslim/kernel8.img   # 両方
 - 試験: cc/test-a64/switch_gen.py（make cc-test の 8d）に、型の端に接した密な switch（dense_lo・dense_hi）と
   case が 100・250 個のものを足した（種 8 つで表引き 61〜82 個、GCC と同じ。QEMU の cortex-a53 でも）。
   確かめ: cmp_o.sh（かけらの道と文字列の道の .o が同じ）、make cc-test、verify.sh（quick なし。すべて一致）。
+
+## 16. switch のビットの表（2026-11-27。GCC の bit test と同じ考え方）
+
+- cc/ir.inc の ir_switch_bits（ir_switch から、表引き ir_switch_table より先に試す）: 行き先が IR_SWBITS_TARGETS（3）個まで、
+  いちばん小さい下端から大きい上端までが 64 個まで、case の値が IR_SWBITS_MIN（4）個以上なら、`idx = v - 下端` を符号なしで
+  幅と比べて外れたら default へ、中なら行き先ごとに「その行き先になる値のビットを立てた定数」を `(定数 >> idx) & 1` で
+  調べる。新しい命令は足さず、今の命令で組み立てる（`& 1` の分岐は 10 の tbz・tbnz になる: `movz`・`lsr`・`tbz`）。
+  case が少ないときは並べ替えていないので、下端・上端は並びに頼らずに求める（ir_case_unsigned はいつも決める）。
+- 例: `switch (op) { case B: case D: case G: case H: case M: case P: return 0; default: return 1; }` が
+  `sub`・`cmp`・`b.hi`・`movz`・`lsr`・`tbz` の分岐 2 つに（前は二分探索）。
+- 効果: コンパイラの中でビットの表になった switch 195 個（codegen.c 113・preprocess.c 47 など）。実機のカーネルの中の
+  コンパイラは変わらない（parse.c 523〜524M、codegen.c 1,242〜1,243M。熱いところにない）。2 世代目の .text は
+  514,388 → 515,284 バイト。文字の分類の switch（6 つずつ 2 つの行き先、幅 31）を乱数の文字 6.5 万字 × 200 回で
+  回すと、実機で 344〜345 → 319〜321ms（前は表引き。7.5% 速い）。
+- 試験: cc/test-a64/switch_gen.py に、いくつかの case が同じ本体を共有する形（shared）を足した（種 8 つでビットの表
+  77〜107 個・表引き 60〜68 個、GCC と同じ。QEMU の cortex-a53 でも）。確かめ: cmp_o.sh、make cc-test、verify.sh
+  （quick なし。すべて一致）。

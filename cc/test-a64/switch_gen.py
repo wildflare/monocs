@@ -62,11 +62,14 @@ def gen_func(r, k):
     lines = [f"__attribute__((noinline)) int f{k}({ty} v) {{", "  int s = 0;", "  switch (v) {"]
     order = ranges[:]
     r.shuffle(order)
+    shared = r.random() < 0.4      # いくつかの case が同じ本体（ビットの表 ir_switch_bits にかかる形。2026-11-27）
     for i, (a, b) in enumerate(order):
         if a == b:
             lines.append(f"  case {lit(ty, a)}:")
         else:
             lines.append(f"  case {lit(ty, a)} ... {lit(ty, b)}:")
+        if shared and i + 1 < len(order) and r.random() < 0.75:
+            continue                # 本体なし（次の case と同じ行き先）
         lines.append(f"    s += {i + 1};")
         if r.random() < 0.8:
             lines.append("    break;")
