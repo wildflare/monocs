@@ -561,3 +561,21 @@ sh tools/slimcc/devbench.sh build/kernel8.img build/kslim/kernel8.img   # 両方
   shrink-wrapping）。`if (!active) return malloc(n);` のような早く戻る道でも全部保存している。7 つのうち多くは、
   TLS の変数の番地を呼び出しをまたいで持つため（GCC は関数の中の TLS の変数を 1 つの土台から読むので 1 つで済む）。
   番地を読み書きの命令に入れる形は試して遅くなった（5. の見送り）。
+
+## 20. コンパイラの中の、中間表現を全部たどる段を軽く（2026-11-27）
+
+- 残りの大きな候補（shrink-wrapping、TLS の土台、後置の番地）はどれも手間のわりに効き目が見込めないので、Pi 5 の perf で
+  2 世代目（slimcc で作った slimcc）の codegen.c のコンパイルを命令ごとに見た。上位は中間表現の命令を全部たどる段
+  （ir_count_uses 3.3%・ir_cleanup 3.1%・ir_resolve_operands 2.8%・ir_dce 2.0%・ir_fingerprint 2.0%）で、時間は命令の
+  つながり（next）をたどって op を読むところのキャッシュの待ち。出すコードではなく、コンパイラのやり方の直し:
+  - ir_cleanup: phi はブロックの頭に並ぶ（作るのは ir_new_phi の ir_prepend だけ。SSA を抜ける段もこれを前提にしている）
+    ので、phi を探すループを、phi でない命令で止める（前は前任の数だけ、ブロックの命令を毎回最後までたどっていた）。
+  - ir_dce: 後ろから（ブロックも後ろから）たどる。使う命令を先に消すので、使われなくなる命令の鎖が 1 回でほとんど消える
+    （前は前から順で、鎖の長さだけ関数全体をくり返していた）。消える命令の組は同じ。
+- 効果: Pi 5 で codegen.c のコンパイルの命令の数 GCC で作った slimcc 481.5 → 477.1M、slimcc で作った slimcc 711.1 → 696.5M。
+  実機のカーネルの中のコンパイラ parse.c 518 → 514M、codegen.c 1,224 → 1,198M（2.2%。前後のカーネルを交互に 2 回ずつ）。
+  出すコードは変わらない（cmp_s.sh）。確かめ: make cc-test、verify.sh（quick なし。すべて一致）。
+- 試して戻したもの: ir_count_uses を 1 回たどるだけにする（数え直しの番号を命令に持たせ、最初に触ったときに 0 にする）。
+  使うたびに番号を比べる分が重く、命令が増えた（696.5 → 699.7M）。
+- この探し方（Pi 5 で `perf record -F 20000 ./slimcc-stage2 -c -o /dev/null codegen.c`、`perf annotate -s 関数`）は、出すコードの
+  むだと、コンパイラのやり方のむだの両方が見える。次は ir_intervals・ir_linear_scan・ir_resolve_operands・ir_fingerprint。

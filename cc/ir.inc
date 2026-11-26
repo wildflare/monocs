@@ -2842,13 +2842,15 @@ static void ir_cleanup(void) {
     for (int i = 0; i < bb->npreds; i++) {
       if (!bb->preds[i]->reachable)
         continue;
-      for (IrInst *in = bb->first; in; in = in->next)
-        if (in->op == IR_PHI && in->nargs == bb->npreds)
+      // phi はブロックの頭に並ぶ（作るのは ir_new_phi の ir_prepend だけ）ので、phi でない命令で止める（2026-11-27。
+      // 前はブロックの命令を毎回最後までたどり、Pi 5 で ir_cleanup が全体の 3%）
+      for (IrInst *in = bb->first; in && in->op == IR_PHI; in = in->next)
+        if (in->nargs == bb->npreds)
           in->args[k] = in->args[i];
       bb->preds[k++] = bb->preds[i];
     }
-    for (IrInst *in = bb->first; in; in = in->next)
-      if (in->op == IR_PHI && in->nargs == bb->npreds)
+    for (IrInst *in = bb->first; in && in->op == IR_PHI; in = in->next)
+      if (in->nargs == bb->npreds)
         in->nargs = k;
     bb->npreds = k;
   }
@@ -2859,8 +2861,8 @@ static void ir_cleanup(void) {
       IrBlock *bb = ir_blocks[b];
       if (!bb->reachable)
         continue;
-      for (IrInst *in = bb->first; in; in = in->next) {
-        if (in->op != IR_PHI || in->repl)
+      for (IrInst *in = bb->first; in && in->op == IR_PHI; in = in->next) {
+        if (in->repl)
           continue;
         ir_resolve_operands(in);
         IrInst *same = NULL;
@@ -3414,16 +3416,18 @@ static bool ir_is_pure(IrInst *in) {
 }
 
 // 不要なコードの除去: 使われない純粋な計算を除く（使う命令が消えると、その引数も見直す）
+// 後ろから（ブロックも後ろから）たどる（2026-11-27）: 使う命令を先に消すので、使われなくなる命令の鎖が 1 回でほとんど
+// 消える（前から順にたどると、鎖の長さだけ関数全体をくり返していた）。消える命令の組は同じ
 static void ir_dce(void) {
   ir_count_uses();
   for (bool changed = true; changed;) {
     changed = false;
-    for (int b = 0; b < ir_nblocks; b++) {
+    for (int b = ir_nblocks - 1; b >= 0; b--) {
       IrBlock *bb = ir_blocks[b];
       if (!bb->reachable)
         continue;
-      for (IrInst *in = bb->first, *next; in; in = next) {
-        next = in->next;
+      for (IrInst *in = bb->last, *prev; in; in = prev) {
+        prev = in->prev;
         if (in->uses > 0 || !ir_is_pure(in))
           continue;
         if (in->a)
