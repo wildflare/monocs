@@ -1065,7 +1065,7 @@ static const struct {
     { "halt",   cmd_poweroff, nullptr },
     { "mem",    cmd_mem,    "mem [-r]        ヒープ（いちばん多かったときも。-r で戻す）とファイルのキャッシュの使用量" },
     { "wifi",   cmd_wifi,   "wifi [start|scan|connect|disconnect|status]  内蔵 Wi-Fi（connect は /etc/wpa_supplicant.conf か SSID PASS）" },
-    { "sandbox", sandbox_cmd, "sandbox FILE.c [ARGS]  サンドボックス（EL0）で動かす（画面に書く・文字列・malloc だけ。OS のメモリ・ファイル・ネットワークは使えない）" },
+    { "sandbox", sandbox_cmd, "sandbox FILE.c [ARGS]  サンドボックス（EL0）で動かす（画面・キー・時刻・眠る・乱数・文字列・malloc。OS のメモリ・ファイル・ネットワークは使えない）" },
     { "sbtest", cmd_sbtest, "sbtest          サンドボックス（EL0）の段階 2 を試す（開発用）" },
     { "sdtest", cmd_sdtest, "sdtest [N] | sdtest hs [N]  SD カードの SDHOST のドライバを試す（hs: 50MHz を、区画の最後の空きクラスタで）" },
     { "clock",  cmd_clock,  "clock           CPU のクロック（ファームウェアの値と実測）と温度" },

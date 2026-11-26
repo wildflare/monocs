@@ -4,12 +4,14 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 #include "sandbox_sys.h"
 
 static struct __file out_file, err_file;
 FILE *const stdout = &out_file;
 FILE *const stderr = &err_file;
-FILE *const stdin = nullptr;
+static struct __file in_file;
+FILE *const stdin = &in_file;
 
 #define BUF 1024
 static char out_buf[BUF];
@@ -358,4 +360,56 @@ int sprintf(char *buf, const char *fmt, ...)
     int r = vsprintf(buf, fmt, ap);
     va_end(ap);
     return r;
+}
+
+// ---- 読む（標準入力だけ。read は unistd.c） ----
+static int unget = -1;
+
+int fgetc(FILE *f)
+{
+    if (f != stdin)
+        return EOF;
+    fflush(stdout);
+    if (unget >= 0) {
+        int c = unget;
+        unget = -1;
+        return c;
+    }
+    unsigned char c;
+    return read(0, &c, 1) == 1 ? c : EOF;
+}
+
+int (getc)(FILE *f)     // かっこ: stdio.h のマクロにされないように
+{
+    return fgetc(f);
+}
+
+int (getchar)(void)
+{
+    return fgetc(stdin);
+}
+
+int ungetc(int c, FILE *f)
+{
+    if (f != stdin || c == EOF)
+        return EOF;
+    unget = (unsigned char)c;
+    return c;
+}
+
+char *fgets(char *s, int n, FILE *f)
+{
+    int i = 0;
+    while (i < n - 1) {
+        int c = fgetc(f);
+        if (c == EOF)
+            break;
+        s[i++] = (char)c;
+        if (c == '\n')
+            break;
+    }
+    if (i == 0)
+        return nullptr;
+    s[i] = 0;
+    return s;
 }

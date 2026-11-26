@@ -10,6 +10,7 @@
 #include <string.h>
 #include "libslimcc.h"
 #include "../kernel/sandbox.h"
+#include "../drivers/uart.h"
 
 #define LIB_DIR     "/usr/lib/sandbox"
 #define MAX_OBJS    32
@@ -43,10 +44,12 @@ int sandbox_cmd(int argc, char **argv)
     SlimccObj *objs[MAX_OBJS];
     int n = 0, r = 1;
     static const char *const incs[] = { LIB_DIR, nullptr };
-    SlimccOptions opt = { .std = "gnu23" };
-    SlimccOptions lib_opt = { .std = "gnu23", .include_paths = incs };
+    static const char *const defs[] = { "_POSIX_MONOTONIC_CLOCK", nullptr };   // ふつうのアプリと同じ（run.c の app_defines）
+    SlimccOptions opt = { .std = "gnu23", .defines = defs };
+    SlimccOptions lib_opt = { .std = "gnu23", .include_paths = incs, .defines = defs };
     SlimccImage *img = nullptr;
     uint8_t *region = nullptr;
+    uint32_t intr0 = uart_shell_interrupts();     // コンパイルの途中の Ctrl-C でも、動かさずに止める
 
     if (!(objs[n++] = slimcc_compile(argv[1], nullptr, &opt)))
         goto done;
@@ -83,6 +86,10 @@ int sandbox_cmd(int argc, char **argv)
     void *entry = slimcc_symbol(img, "__sandbox_start");
     if (!entry) {
         fprintf(stderr, "sandbox: no __sandbox_start (the sandbox's C library is missing?)\n");
+        goto done;
+    }
+    if (uart_shell_interrupts() != intr0) {
+        r = 130;
         goto done;
     }
     int64_t status = 0;

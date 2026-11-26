@@ -119,3 +119,45 @@ char *strstr(const char *h, const char *n)
             return (char *)h;
     return k ? nullptr : (char *)h;
 }
+
+size_t strspn(const char *s, const char *accept)
+{
+    size_t n = 0;
+    while (s[n] && strchr(accept, s[n]))
+        n++;
+    return n;
+}
+
+size_t strcspn(const char *s, const char *reject)
+{
+    size_t n = 0;
+    while (s[n] && !strchr(reject, s[n]))
+        n++;
+    return n;
+}
+
+char *strncat(char *restrict d, const char *restrict s, size_t n)
+{
+    char *p = d + strlen(d);
+    while (n-- && *s)
+        *p++ = *s++;
+    *p = 0;
+    return d;
+}
+
+size_t strnlen(const char *s, size_t n)
+{
+    size_t i = 0;
+    while (i < n && s[i])
+        i++;
+    return i;
+}
+
+void *memchr(const void *s, int c, size_t n)
+{
+    const unsigned char *p = s;
+    for (; n--; p++)
+        if (*p == (unsigned char)c)
+            return (void *)p;
+    return nullptr;
+}

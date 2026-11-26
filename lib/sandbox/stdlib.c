@@ -107,3 +107,46 @@ int atoi(const char *s)
         v = v * 10 + (*s++ - '0');
     return neg ? -v : v;
 }
+
+char *strdup(const char *s)
+{
+    size_t n = strlen(s) + 1;
+    char *p = malloc(n);
+    return p ? memcpy(p, s, n) : nullptr;
+}
+
+long strtol(const char *s, char **end, int base)
+{
+    const char *p = s;
+    while (*p == ' ' || *p == '\t' || *p == '\n')
+        p++;
+    bool neg = false;
+    if (*p == '-' || *p == '+')
+        neg = *p++ == '-';
+    if ((base == 0 || base == 16) && p[0] == '0' && (p[1] == 'x' || p[1] == 'X'))
+        p += 2, base = 16;
+    else if (base == 0)
+        base = p[0] == '0' ? 8 : 10;
+    long v = 0;
+    const char *start = p;
+    for (;; p++) {
+        int d = *p >= '0' && *p <= '9' ? *p - '0' : *p >= 'a' && *p <= 'z' ? *p - 'a' + 10
+              : *p >= 'A' && *p <= 'Z' ? *p - 'A' + 10 : 99;
+        if (d >= base)
+            break;
+        v = v * base + d;
+    }
+    if (end)
+        *end = (char *)(p == start ? s : p);
+    return neg ? -v : v;
+}
+
+unsigned long strtoul(const char *s, char **end, int base)
+{
+    return (unsigned long)strtol(s, end, base);
+}
+
+long atol(const char *s)
+{
+    return strtol(s, nullptr, 10);
+}
