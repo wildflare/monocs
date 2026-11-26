@@ -45,4 +45,4 @@
   まとめ（sandbox と cweb の両方が使う）、sandbox_cmd.c は sandbox_run_files（.c を 64 個まで）。確かめ: QEMU（Monocs の
   sha256sum が Linux と同じ、-c、目録のない手元のフォルダ、書き換えたファイルで hash mismatch）、実機（Pi 5 のサーバーの
   フォルダのページを目録のハッシュ付きで、まちがったハッシュで止まる、sha256sum が Pi 5 と同じ）。
-- 次の候補: https（人が公開したページ）、目録のサブフォルダ、If-None-Match（httpd に ETag から）。ブラウザの「戻る」のキーは済み（2026-11-26）: どのページでも Ctrl-C で 1 つ前へ戻り（戻る先がなければ終わる。終了の値 130）、Ctrl-\\ でブラウザごと終わる（uart_interrupt_is_quit で見分ける）。
+- 次の候補: 目録のサブフォルダ、If-None-Match（httpd に ETag から）。https（人が公開したページ）は保留（2026-11-26、ユーザーと合意。Monocs 同士は HTTP ＋ハッシュで足りる）。ブラウザの「戻る」のキーは済み（2026-11-26）: どのページでも Ctrl-C で 1 つ前へ戻り（戻る先がなければ終わる。終了の値 130）、Ctrl-\\ でブラウザごと終わる（uart_interrupt_is_quit で見分ける）。
