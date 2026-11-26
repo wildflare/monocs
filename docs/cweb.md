@@ -37,4 +37,12 @@
   確かめ: QEMU（手元のファイル: 目次 → 2 ページ目（ハッシュ付きのリンク）→ 戻る → まちがったハッシュのリンクで止まる → q で終わる）、
   実機（Pi 5 のサーバーから a → b（相対）→ c（/ から）、ハッシュは a のだけ渡す）。
 - 4: 最初のページ（samples/cweb/。SD カードの /usr/share/samples/cweb/）: index.c（目次。矢印キーと Enter）、snake.c（ヘビのゲーム）、life.c（ライフゲーム）、about.c（説明）。`cweb /usr/share/samples/cweb/index.c` で開く。目次からのリンクはハッシュなし（手元のサンプルなので。ページを直すたびに目次のハッシュを書き直さずに済む）。QEMU で、どのページも開いて戻れることを確かめた。
-- 次の候補: https（人が公開したページ）、ページの中のほかのファイル（#include "x.h"）、If-None-Match。ブラウザの「戻る」のキーは済み（2026-11-26）: どのページでも Ctrl-C で 1 つ前へ戻り（戻る先がなければ終わる。終了の値 130）、Ctrl-\\ でブラウザごと終わる（uart_interrupt_is_quit で見分ける）。
+- フォルダのページ（2026-11-26）: URL かパスを / で終わらせると（手元のフォルダは / なしでも）、そのフォルダの目録 cweb.txt を
+  取ってきて（手元なら読んで）、書かれたファイルを全部取ってきて確かめ、その .c をまとめてコンパイルする（#include "x.h" は同じ
+  フォルダから見つかる）。目録は sha256sum の形（`sha256sum *.c *.h > cweb.txt`。Monocs にも /usr/bin/sha256sum を足した。
+  出力は GNU と同じ、-c もある）。#sha256= は目録のハッシュ（1 つで全部のファイルを確かめられる）。ファイルの名前は英数字と
+  ._- だけ（サブフォルダはまだ）。目録のない手元のフォルダは、中の .c を全部。os/slimcc/sandbox_fetch.c の sandbox_prepare に
+  まとめ（sandbox と cweb の両方が使う）、sandbox_cmd.c は sandbox_run_files（.c を 64 個まで）。確かめ: QEMU（Monocs の
+  sha256sum が Linux と同じ、-c、目録のない手元のフォルダ、書き換えたファイルで hash mismatch）、実機（Pi 5 のサーバーの
+  フォルダのページを目録のハッシュ付きで、まちがったハッシュで止まる、sha256sum が Pi 5 と同じ）。
+- 次の候補: https（人が公開したページ）、目録のサブフォルダ、If-None-Match（httpd に ETag から）。ブラウザの「戻る」のキーは済み（2026-11-26）: どのページでも Ctrl-C で 1 つ前へ戻り（戻る先がなければ終わる。終了の値 130）、Ctrl-\\ でブラウザごと終わる（uart_interrupt_is_quit で見分ける）。

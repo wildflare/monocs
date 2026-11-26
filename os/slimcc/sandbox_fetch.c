@@ -201,3 +201,198 @@ bool sandbox_fetch(const char *url, char *out, size_t out_size)
         snprintf(out, out_size, "%s", file);
     return ok;
 }
+
+// ---- ページの指定から、コンパイルするファイルの一覧（sandbox_page.h。2026-11-26） ----
+#include <dirent.h>
+#include "sandbox_page.h"
+
+#define MANIFEST    "cweb.txt"
+
+static bool is_http(const char *u)
+{
+    return !strncmp(u, "http://", 7) || !strncmp(u, "https://", 8);
+}
+
+// 目録の中のファイルの名前: 英数字と ._- だけ（フォルダの中だけ。/ と .. は使えない）
+static bool safe_name(const char *n)
+{
+    if (!*n || n[0] == '.')
+        return false;
+    for (const char *p = n; *p; p++)
+        if (!isalnum((unsigned char)*p) && !strchr("._-", *p))
+            return false;
+    return true;
+}
+
+static bool ends_with_c(const char *n)
+{
+    size_t l = strlen(n);
+    return l > 2 && !strcmp(n + l - 2, ".c");
+}
+
+// 手元のファイルの中身の SHA-256
+static bool file_sha(const char *path, char out[65])
+{
+    FILE *f = fopen(path, "rb");
+    if (!f)
+        return false;
+    char *buf = malloc(MAX_BODY);
+    size_t n = buf ? fread(buf, 1, MAX_BODY, f) : 0;
+    bool ok = buf && !ferror(f) && !(n == MAX_BODY && fgetc(f) != EOF);
+    fclose(f);
+    if (ok)
+        sha256_hex(buf, n, out);
+    free(buf);
+    return ok;
+}
+
+// 目録（sha256sum の形: 「64 桁  名前」か「64 桁 *名前」）を読み、1 つずつ fn に渡す。fn が false なら止める
+static bool each_entry(const char *manifest, bool (*fn)(const char *hash, const char *name, void *ctx), void *ctx)
+{
+    FILE *f = fopen(manifest, "r");
+    if (!f)
+        return fprintf(stderr, "sandbox: cannot read %s\n", manifest), false;
+    char line[400];
+    bool ok = true;
+    int lines = 0;
+    while (ok && fgets(line, sizeof line, f)) {
+        line[strcspn(line, "\r\n")] = 0;
+        if (!line[0] || line[0] == '#')
+            continue;
+        char *name = line + 64;
+        bool hex = strlen(line) > 66;
+        for (int i = 0; i < 64 && hex; i++)
+            hex = isxdigit((unsigned char)line[i]);
+        if (!hex || name[0] != ' ' || (name[1] != ' ' && name[1] != '*')) {
+            fprintf(stderr, "sandbox: %s: bad line (write it as sha256sum does): %s\n", manifest, line);
+            ok = false;
+            break;
+        }
+        line[64] = 0;
+        for (int i = 0; i < 64; i++)
+            line[i] = (char)tolower((unsigned char)line[i]);
+        name += 2;
+        if (!safe_name(name)) {
+            fprintf(stderr, "sandbox: %s: bad file name (letters, digits, . _ - only): %s\n", manifest, name);
+            ok = false;
+            break;
+        }
+        ok = fn(line, name, ctx);
+        lines++;
+    }
+    fclose(f);
+    if (ok && !lines)
+        return fprintf(stderr, "sandbox: %s lists no files\n", manifest), false;
+    return ok;
+}
+
+struct collect {
+    const char *base;       // http なら URL のフォルダ、手元ならフォルダのパス（どちらも / で終わる）
+    bool http;
+    char (*files)[SANDBOX_PATH_MAX];
+    int max, n;
+};
+
+static bool add_c(struct collect *c, const char *path)
+{
+    if (!ends_with_c(path))
+        return true;
+    if (c->n == c->max)
+        return fprintf(stderr, "sandbox: too many .c files (up to %d)\n", c->max), false;
+    snprintf(c->files[c->n++], SANDBOX_PATH_MAX, "%s", path);
+    return true;
+}
+
+static bool collect_entry(const char *hash, const char *name, void *ctx)
+{
+    struct collect *c = ctx;
+    char path[SANDBOX_PATH_MAX];
+    if (c->http) {          // 目録のハッシュを付けて取ってくる（合わなければ置かない）
+        char url[600];
+        snprintf(url, sizeof url, "%s%s#sha256=%s", c->base, name, hash);
+        if (!sandbox_fetch(url, path, sizeof path))
+            return false;
+    } else {                // 手元: 読んで確かめる
+        snprintf(path, sizeof path, "%s%s", c->base, name);
+        char got[65];
+        if (!file_sha(path, got))
+            return fprintf(stderr, "sandbox: cannot read %s\n", path), false;
+        if (strcmp(got, hash))
+            return fprintf(stderr, "sandbox: hash mismatch: %s\n  listed %s\n  got    %s\n", path, hash, got), false;
+    }
+    return add_c(c, path);
+}
+
+int sandbox_prepare(const char *spec, char (*files)[SANDBOX_PATH_MAX], int max)
+{
+    const char *hash = strchr(spec, '#');
+    char pin[65] = "";
+    if (hash) {
+        if (strncmp(hash, "#sha256=", 8) || strlen(hash + 8) != 64)
+            return fprintf(stderr, "sandbox: write the hash as #sha256= and 64 hex digits\n"), 0;
+        for (int i = 0; i < 64; i++)
+            pin[i] = (char)tolower((unsigned char)hash[8 + i]);
+    }
+    char base[SANDBOX_PATH_MAX];
+    snprintf(base, sizeof base, "%.*s", hash ? (int)(hash - spec) : (int)strlen(spec), spec);
+    size_t bl = strlen(base);
+    struct stat st;
+    bool local_dir = !is_http(base) && stat(base, &st) == 0 && S_ISDIR(st.st_mode);
+    bool dir = (bl && base[bl - 1] == '/') || local_dir;
+    if (dir && bl && base[bl - 1] != '/' && bl + 1 < sizeof base)
+        strcat(base, "/");
+    struct collect c = { base, is_http(base), files, max, 0 };
+
+    if (!dir) {                                     // 1 つのファイル
+        if (c.http)
+            return sandbox_fetch(spec, files[0], SANDBOX_PATH_MAX) ? 1 : 0;
+        if (pin[0]) {
+            char got[65];
+            if (!file_sha(base, got))
+                return fprintf(stderr, "sandbox: cannot read %s\n", base), 0;
+            if (strcmp(got, pin))
+                return fprintf(stderr, "sandbox: hash mismatch: %s\n  expected %s\n  got      %s\n", base, pin, got), 0;
+        }
+        snprintf(files[0], SANDBOX_PATH_MAX, "%s", base);
+        return 1;
+    }
+    char manifest[SANDBOX_PATH_MAX];
+    if (c.http) {                                   // 目録を取ってくる（#sha256= は目録のハッシュ）
+        char url[600];
+        snprintf(url, sizeof url, "%s" MANIFEST "%s%s", base, pin[0] ? "#sha256=" : "", pin);
+        if (!sandbox_fetch(url, manifest, sizeof manifest))
+            return 0;
+    } else {
+        snprintf(manifest, sizeof manifest, "%s" MANIFEST, base);
+        if (stat(manifest, &st) != 0) {             // 目録のない手元のフォルダ: 中の .c を全部
+            if (pin[0])
+                return fprintf(stderr, "sandbox: %s: no %s to check the hash against\n", base, MANIFEST), 0;
+            DIR *d = opendir(base);
+            struct dirent *e;
+            while (d && (e = readdir(d))) {
+                char path[SANDBOX_PATH_MAX];
+                snprintf(path, sizeof path, "%s%s", base, e->d_name);
+                if (e->d_name[0] != '.' && !add_c(&c, path)) {
+                    closedir(d);
+                    return 0;
+                }
+            }
+            if (d)
+                closedir(d);
+            if (!c.n)
+                fprintf(stderr, "sandbox: %s has no .c files\n", base);
+            return c.n;
+        }
+        if (pin[0]) {
+            char got[65];
+            if (!file_sha(manifest, got) || strcmp(got, pin))
+                return fprintf(stderr, "sandbox: hash mismatch: %s\n  expected %s\n  got      %s\n", manifest, pin,
+                               file_sha(manifest, got) ? got : "(cannot read)"), 0;
+        }
+    }
+    if (!each_entry(manifest, collect_entry, &c))
+        return 0;
+    if (!c.n)
+        fprintf(stderr, "sandbox: %s lists no .c files\n", manifest);
+    return c.n;
+}

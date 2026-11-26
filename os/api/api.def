@@ -247,6 +247,7 @@ API_AS(monocs_rexec_queued, rexec_queued)
 API_AS(monocs_console_interrupt, uart_raise_interrupt)   // コンソールのアプリを止める（Ctrl-\ と同じ）
 API_AS(monocs_core0_where, core0_where)   // コア 0 が最後の割り込みのときにいた番地（止まったときの調べ）
 API(monocs_fat_attr)          // FAT の属性（読み出し専用・隠し・システム・アーカイブ）を変える・読む
+API_AS(monocs_sha256, sha256)  // SHA-256（os/kernel/sha256.c。/usr/bin/sha256sum、C の Web の目録 cweb.txt）
 API(monocs_dirent_hidden)     // readdir が最後に返したものが FAT の隠しファイルか（os/libc/dirent.c）
 
 // コンパイラ（slimcc-a64）が生成するコードから呼ばれる補助関数（long double = 128 ビット浮動小数点の演算）

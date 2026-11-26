@@ -15,7 +15,7 @@
 #include "../drivers/uart.h"
 
 #define LIB_DIR     "/usr/lib/sandbox"
-#define MAX_OBJS    32
+#define MAX_OBJS    96      // プログラムの .c（64 まで）と、ライブラリの .c
 
 static uint8_t *link_region;
 static bool link_used;
@@ -37,11 +37,12 @@ static void *no_os_functions(const char *, void *)
     return nullptr;
 }
 
-bool sandbox_fetch(const char *url, char *out, size_t out_size);    // sandbox_fetch.c
+#include "sandbox_page.h"
 
-// ソースのファイル path をサンドボックスで動かす（コンパイル・つなぐ・動かす）。argv はプログラムに渡すもの。
+// ソースのファイル paths（npaths 個。1 つのプログラムとしてつなぐ）をサンドボックスで動かす（コンパイル・つなぐ・動かす）。
+// argv はプログラムに渡すもの。
 // 終わり方を res に、終了の値を返す（プログラムの値、139・130・124、動かせなければ 1）。cweb_cmd.c も使う
-int sandbox_run_file(const char *path, int argc, char **argv, enum sandbox_result *res)
+int sandbox_run_files(const char *const *paths, int npaths, int argc, char **argv, enum sandbox_result *res)
 {
     SlimccObj *objs[MAX_OBJS];
     int n = 0, r = 1;
@@ -59,8 +60,13 @@ int sandbox_run_file(const char *path, int argc, char **argv, enum sandbox_resul
     static const char key_prog[] = "sandbox\x1fgnu23\x1f-I" LIB_DIR "\x1f-D_POSIX_MONOTONIC_CLOCK";
     static const char key_lib[] = "sandbox-lib\x1fgnu23\x1f-I" LIB_DIR "\x1f-D_POSIX_MONOTONIC_CLOCK";
     cache_begin();
-    if (!(objs[n++] = cache_compile(path, &opt, key_prog)))
+    if (npaths < 1 || npaths > 64) {
+        fprintf(stderr, "sandbox: %d source files (1 to 64)\n", npaths);
         goto done;
+    }
+    for (int i = 0; i < npaths; i++)
+        if (!(objs[n++] = cache_compile(paths[i], &opt, key_prog)))
+            goto done;
     // ライブラリの .c: 頭のフォルダと、curses/（OS の curses の写し）・libc/（wcwidth）
     static const char *const dirs[] = { LIB_DIR, LIB_DIR "/curses", LIB_DIR "/libc" };
     for (size_t k = 0; k < sizeof dirs / sizeof dirs[0]; k++) {
@@ -127,19 +133,25 @@ done:
     return r;
 }
 
+int sandbox_run_file(const char *path, int argc, char **argv, enum sandbox_result *res)
+{
+    return sandbox_run_files(&path, 1, argc, argv, res);
+}
+
 int sandbox_cmd(int argc, char **argv)
 {
     if (argc < 2) {
-        fprintf(stderr, "usage: sandbox FILE.c|http://…/FILE.c[#sha256=…] [ARGS...]\n");
+        fprintf(stderr, "usage: sandbox FILE.c|DIR/|http://…/FILE.c|http://…/DIR/[#sha256=…] [ARGS...]\n");
         return 2;
     }
-    char fetched[300];
-    const char *path = argv[1];
-    if (!strncmp(argv[1], "http://", 7) || !strncmp(argv[1], "https://", 8)) {   // 取ってきて確かめる（sandbox_fetch.c）
-        if (!sandbox_fetch(argv[1], fetched, sizeof fetched))
-            return 1;
-        path = fetched;
-    }
+    // 指定から、確かめたソースのファイルの一覧を作る（sandbox_fetch.c: 取ってくる・目録 cweb.txt・ハッシュ）
+    static char files[SANDBOX_MAX_FILES][SANDBOX_PATH_MAX];
+    int nf = sandbox_prepare(argv[1], files, SANDBOX_MAX_FILES);
+    if (nf <= 0)
+        return 1;
+    const char *paths[SANDBOX_MAX_FILES];
+    for (int i = 0; i < nf; i++)
+        paths[i] = files[i];
     enum sandbox_result res;
-    return sandbox_run_file(path, argc - 1, argv + 1, &res);
+    return sandbox_run_files(paths, nf, argc - 1, argv + 1, &res);
 }

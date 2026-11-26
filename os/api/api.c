@@ -46,6 +46,7 @@ extern char gnu_qsort_r[] __asm__("qsort_r");
 #include "../kernel/clock.h"
 #include "../net/udp_api.h"
 #include "../net/dns_api.h"
+#include "../kernel/sha256.h"
 #include "../drivers/wifi_auto.h"
 #include "api.h"
 #include "include/curses.h"

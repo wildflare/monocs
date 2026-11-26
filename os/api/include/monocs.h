@@ -89,6 +89,7 @@ int monocs_fat_attr(const char *path, int set, int clear);
 bool monocs_console_remote(void);         // telnet・ssh でだれかがつないでいるか（写しが開いている）
 bool monocs_app_running(void);            // コア 0 でアプリが動いているか（シェルがコマンドを待っていない）
 int monocs_shell_status(void);            // シェルが最後に動かした行の終了の値（$?）
+void monocs_sha256(const void *data, size_t len, uint8_t out[32]);   // SHA-256（FIPS 180-4）
 size_t monocs_klog_read(char *buf, size_t size);  // カーネルの記録（dmesg と同じもの。古いものから。写したバイト数）
 bool monocs_console_hangup(void);         // シェルで exit・logout が打たれたら true（1 回だけ）。出力を送り切ってから接続を閉じる
 #include "monocs_sysstat.h"     // monocs_sysstat（システムの様子。/bin/top）
