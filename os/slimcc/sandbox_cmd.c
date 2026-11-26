@@ -37,11 +37,19 @@ static void *no_os_functions(const char *, void *)
     return nullptr;
 }
 
+bool sandbox_fetch(const char *url, char *out, size_t out_size);    // sandbox_fetch.c
+
 int sandbox_cmd(int argc, char **argv)
 {
     if (argc < 2) {
-        fprintf(stderr, "usage: sandbox FILE.c [ARGS...]\n");
+        fprintf(stderr, "usage: sandbox FILE.c|http://…/FILE.c[#sha256=…] [ARGS...]\n");
         return 2;
+    }
+    char fetched[300];
+    if (!strncmp(argv[1], "http://", 7) || !strncmp(argv[1], "https://", 8)) {   // 取ってきて確かめる（sandbox_fetch.c）
+        if (!sandbox_fetch(argv[1], fetched, sizeof fetched))
+            return 1;
+        argv[1] = fetched;
     }
     SlimccObj *objs[MAX_OBJS];
     int n = 0, r = 1;

@@ -179,6 +179,8 @@ curl -X DELETE http://192.168.7.2/tmp/old.txt               # 消す
 curl --digest -u monocs http://192.168.3.96/etc/services.txt  # Wi-Fi から（ダイジェスト認証）
 ```
 
+**公開のフォルダ** `/root/share`: この下だけは、Wi-Fi からもパスワードなしで読めます（GET・HEAD だけ）。ほかの Monocs に C のソースを渡すための場所です（`sandbox http://相手/root/share/…/prog.c#sha256=…`）。同じ Wi-Fi の誰からでも読めるので、人に見せてよいものだけを置いてください。
+
 特別なパス:
 
 | パス | 中身 |

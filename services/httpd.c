@@ -405,6 +405,18 @@ static void respond_401(bool stale)
 
 // 通してよければ true。だめなら応答を用意して false。auth は Authorization ヘッダーの値（なければ NULL）、
 // target は要求の行のパス（%xx を戻す前のまま）
+// 公開のフォルダ（2026-11-26。C の Web: Monocs 同士でソースを渡す。docs/cweb.md）: /root/share の下は、Wi-Fi からも
+// パスワードなしで読める（GET・HEAD だけ）。パスは正規化しないので、.. を含むものは公開として扱わない（外へ出さない）
+#define PUBLIC_DIR "/root/share"
+static bool is_public(const char *method, const char *path)
+{
+    if (strcmp(method, "GET") && strcmp(method, "HEAD"))
+        return false;
+    size_t n = strlen(PUBLIC_DIR);
+    return !strncasecmp(path, PUBLIC_DIR, n) && (path[n] == '/' || path[n] == '\0') && !strstr(path, "..") &&
+           !strchr(path, '\\');
+}
+
 static bool check_auth(const char *method, const char *target, const char *auth, const char *auth_end)
 {
     if (monocs_tcp_netif(conn) != MONOCS_NETIF_WIFI)
@@ -568,7 +580,7 @@ static void handle_request(void)
     requests++;
     char target[300];   // 要求の行のパス（%xx を戻す前のまま。ダイジェスト認証の uri と比べる）
     snprintf(target, sizeof target, "%.*s", (int)(sp2 - sp1 - 1), sp1 + 1);
-    if (!check_auth(method, target, auth, auth_end))
+    if (!is_public(method, path) && !check_auth(method, target, auth, auth_end))
         return;
     if (!strcmp(method, "GET") || !strcmp(method, "HEAD")) {
         do_get(path, method[0] == 'H');
