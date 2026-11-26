@@ -16,7 +16,7 @@ static const char *const text[] = {
     "・検索はわざとありません。見つけ方はリンクと、知り合いからの「これ面白いよ」です。",
     "",
     "ページの書き方: #include <cweb.h> して、",
-    "  cweb_go(\"next.c\") で次へ、cweb_back() で戻る。",
+    "  cweb_go(\"next.c\") で次へ、cweb_back() で戻る（見る人は Ctrl-C でも戻れる）。",
     "ほかの Monocs に見せるには /root/share に置いて、",
     "  cweb http://その Monocs のアドレス/root/share/… で開きます。",
 };

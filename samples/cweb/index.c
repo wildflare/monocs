@@ -38,7 +38,7 @@ int main(void)
                 attroff(COLOR_PAIR(2));
             mvprintw(4 + 2 * i, 23, "%s", pages[i].desc);
         }
-        mvprintw(LINES - 2, 3, "↑↓: 選ぶ  Enter: 開く  q: 終わる");
+        mvprintw(LINES - 2, 3, "↑↓: 選ぶ  Enter: 開く  q: 終わる  （どのページでも Ctrl-C で戻る、Ctrl-\\ で終わる）");
         refresh();
         int c = getch();
         if (c == KEY_UP || c == 'k')

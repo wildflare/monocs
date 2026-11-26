@@ -2,7 +2,8 @@
 //   cweb http://HOST/…/index.c[#sha256=…]     ほかの Monocs などから取ってくる（sandbox_fetch.c: HTTP ＋ハッシュ）
 //   cweb /root/work/site/index.c[#sha256=…]   手元のファイルから（試すとき）
 // ページはサンドボックスで動く C のプログラム。cweb_go(URL)（lib/sandbox/cweb.h）で終わると、そのリンクへ移り、
-// cweb_back() で 1 つ前へ戻る。ふつうに終わる・止められると、ブラウザも終わる。
+// cweb_back() で 1 つ前へ戻る。Ctrl-C でも 1 つ前へ戻り（戻る先がなければ終わる）、Ctrl-\\ でブラウザごと終わる。
+// ふつうに終わる・不正なアクセスなどで止められると、ブラウザも終わる。
 // リンクは今のページからの相対（"next.c"）、/ から（同じサーバーか、手元なら絶対パス）、http://… 。.. は使えない。
 // "#sha256=…" を付けたリンクは移った先の中身を確かめるので、最初のページのハッシュを信頼すれば、たどる先も確かめられる。
 #define _GNU_SOURCE     // strncasecmp（カーネルは ISO C23 なので宣言を見せる）
@@ -11,6 +12,7 @@
 #include <sys/stat.h>
 #include "../kernel/sandbox.h"
 #include "../kernel/sha256.h"
+#include "../drivers/uart.h"
 
 #define URL_MAX     512
 #define HISTORY     32
@@ -85,13 +87,17 @@ int cweb_cmd(int argc, char **argv)
         char *pargv[] = { shown, nullptr };
         enum sandbox_result res;
         int r = sandbox_run_file(path, 1, pargv, &res);
-        if (res != SANDBOX_NAVIGATE)
+        bool back = false;
+        const char *to = nullptr;
+        if (res == SANDBOX_INTERRUPTED && !uart_interrupt_is_quit())
+            back = true;                    // Ctrl-C: 1 つ前のページへ（Ctrl-\\ は終わる）
+        else if (res != SANDBOX_NAVIGATE)
             return r;
-        bool back;
-        const char *to = sandbox_nav(&back);
+        else
+            to = sandbox_nav(&back);
         if (back) {
             if (depth == 0)
-                return 0;                   // 戻る先がない: 終わる
+                return res == SANDBOX_INTERRUPTED ? 130 : 0;    // 戻る先がない: 終わる
             snprintf(cur, sizeof cur, "%s", history[--depth]);
             continue;
         }
