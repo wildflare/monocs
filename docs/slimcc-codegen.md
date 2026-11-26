@@ -255,7 +255,7 @@ sh tools/slimcc/devbench.sh build/kernel8.img build/kslim/kernel8.img   # 両方
   - `mov` が命令の 18%（`mov x0, xN` だけで 6,683 個 / 94,332）。値を作るときに、行き先の引数のレジスタを
     ヒントにする（呼び出しまでに別の呼び出しをまたがない値）。
   - （済み。下の 10）bool を返す関数の結果を `uxtb` で広げてから `cbz`（200 か所）。GCC は `tbz w0, #0`。
-  - `a && b`・`a || b` の 1・0 を選ぶだけの形（合流先の前任が 3 つ）は if 変換にかからない（`ccmp` と `cset` にできる）。
+  - （済み。下の 11）`a && b`・`a || b` の 1・0 を選ぶだけの形（合流先の前任が 3 つ）は if 変換にかからない。
   - long double を返す・比べる定数の評価（parse.c の eval2・eval_cmp・eval_double など）は今までのコード生成のまま
     （GCC の 1.8 倍の命令。long double を中間表現で扱うのは 2026-11-07 にユーザーと合意して見送り）。
 
@@ -275,3 +275,25 @@ sh tools/slimcc/devbench.sh build/kernel8.img build/kslim/kernel8.img   # 両方
   確かめ: make cc-test、cmp_o.sh、verify.sh（quick なし。すべて一致）。
 - まだ: `x & mask`（2^k でない、論理即値にできるもの）の `tst x, #mask` + `b.cond`、`and`・`orr`・`eor` の論理即値
   （今は定数を movz で作る）。
+
+## 11. 比べを続ける（ccmp）と cset（2026-11-27）
+
+- cc/ir.inc の ir_ccmp_chain（ir_optimize の if 変換の前）: 比べの分岐の先 X が「（定数と）比べて分岐するだけ」で、
+  X の前任が B だけ、B と X の分岐が同じ先 S を持つ形（`a && b`・`a || b`。どちらの向きでも）を、
+  `cmp`・`ccmp`・1 つの分岐にする（「B から X へ行く条件」が成り立つときだけ比べ、成り立たなければ
+  X の条件が偽になるフラグ）。S の phi は B と X から来る値が同じときだけ。3 つ以上も続けてつなぐ。
+  IR_CMP の c（すぐ前の比較）と ccond。前の比較はフラグだけを作る（ir_mark_fused）。if 変換が計算を移すときは、
+  続いた比べの頭の前に（間にフラグを変える命令を入れない）。ccmp の即値は 0〜31（ほかはレジスタに作る）。
+- 1・0（-1・0）を選ぶだけの IR_SELECT は cset（csetm）に（ir_select_cset。定数を作らない）。
+- 内蔵アセンブラのかけらの道で、ccmp・cset・csetm・csel を直接組み立てる（前は文字列の道）。
+- 例: parse.c の is_type_kw（`kind >= 91 && kind < 124`）が `cmp`・`ccmp`・`cset` の分岐なしに（前は分岐 2 つと
+  1・0 の写し）。
+- 効果（実機、前後のカーネルを交互に 2 回ずつ）: カーネルの中のコンパイラ parse.c 558 → 556M、codegen.c
+  1,197 → 1,201M。codegen.c は、命令 729.2 → 727.6M、分岐 152.5 → 148.2M、分岐の読み違い 11.14 → 10.95M と
+  どれも減ったが、L1 の命令キャッシュのミスが 4.73 → 5.09M に増えた（コードの並びが変わった分。中身の
+  仕事は減っている）。
+- 試験: cc/test-a64/ccmp_gen.py（run.sh の 8f。型・比べ方・定数（ccmp の即値に入る・入らない）・&&・||・混ぜたもの・
+  !・2〜4 個・返す値・if・三項演算子・ループの条件の関数 300 個 × 種 4 つを GCC と比べる）。
+  確かめ: make cc-test、cmp_o.sh、verify.sh（quick なし。すべて一致）。
+- まだ: 範囲の確かめ（`x >= A && x < B` を `sub`・`cmp`・符号なしの比べ 1 つに。GCC はこうする）、
+  csinc（`c ? x + 1 : x`）。

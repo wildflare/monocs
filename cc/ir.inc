@@ -138,6 +138,9 @@ struct IrInst {
   bool sqrt_nonneg;
   // CALL の戻り値が _Bool（0 か 1。AAPCS64 で下位 8 ビットに入る）。すぐ後の分岐だけに使うなら tbz w0, #0（2026-11-27）
   bool rbool;
+  // CMP の c があれば ccmp（ir_ccmp_chain）: c（すぐ前の比較）の後、条件 ccond が成り立つときだけ a と b を比べ、
+  // 成り立たなければ自分の条件 cond が偽になるフラグにする
+  int ccond;
   // LOAD・STORE の型の組（ir_tbaa。0 は何とでも重なりうる）。組の違う読み書きは重ならない（C の型の規則。
   // -fno-strict-aliasing ではいつも 0）
   uint8_t tbaa;
@@ -3991,6 +3994,8 @@ static bool ir_if_convert(void) {
     // 変える: 腕の計算を B の分岐の前へ（分岐のすぐ前の比較があればその前へ。比較と csel をまとめるため）、
     // phi を IR_SELECT へ、B を J へまっすぐ
     IrInst *pos = br->prev && br->prev == br->a && br->a->op == IR_CMP ? br->a : br;
+    while (pos->op == IR_CMP && pos->c && pos->c == pos->prev)
+      pos = pos->c;     // ccmp の続き（ir_ccmp_chain）の頭の前へ（間にフラグを変える命令を入れない）
     if (ta)
       ir_ifcvt_hoist(ta, pos);
     if (fa)
@@ -4031,6 +4036,100 @@ static bool ir_if_convert(void) {
   return changed;
 }
 
+//
+// 比べを続ける（ccmp。2026-11-27）: a && b・a || b のように、比べの分岐の先が、また比べて分岐するだけのブロックで、
+// 2 つの分岐が同じ先 S を持つ形
+//   B: … CMP1; CBR(CMP1) → X か S（どちらの向きでも）
+//   X: （定数）; CMP2; CBR(CMP2) → S か N（どちらの向きでも）。X の前任は B だけ
+// を、B: … CMP1; CMP2（ccmp）; CBR(CMP2) → N・S にする（「B から X へ行く条件」かつ「X から N へ行く条件」で N）。
+// X の定数は CMP1 の前へ。S の phi は、B から来る値と X から来る値が同じときだけ。3 つ以上も続けてつなぐ。
+// 分岐が 1 つ減り、その後の if 変換（1・0 を選ぶ形なら cset）にもかかるようになる
+//
+static bool ir_ccmp_block(IrBlock *x) {
+  IrInst *br = x->last;
+  if (!br || br->op != IR_CBR || x->nsucc != 2 || x->succ[0] == x->succ[1])
+    return false;
+  IrInst *c2 = br->a;
+  if (c2->op != IR_CMP || c2->fp || c2->bb != x || c2->next != br || c2->uses != 1)
+    return false;
+  for (IrInst *in = x->first; in != c2; in = in->next)
+    if (in->op != IR_CONST)
+      return false;
+  return true;
+}
+
+static bool ir_ccmp_chain(void) {
+  bool changed = false;
+  for (int bi = 0; bi < ir_nblocks; bi++) {
+    IrBlock *b = ir_blocks[bi];
+    while (b->reachable) {
+      IrInst *br = b->last;
+      if (!br || br->op != IR_CBR || b->nsucc != 2 || b->succ[0] == b->succ[1])
+        break;
+      IrInst *c1 = br->a;
+      if (c1->op != IR_CMP || c1->fp || c1->next != br || c1->uses != 1)
+        break;
+      IrBlock *x = NULL, *s = NULL, *n = NULL;
+      int xi = -1;
+      for (int i = 0; i < 2 && !x; i++) {
+        IrBlock *cand = b->succ[i], *other = b->succ[1 - i];
+        if (cand == b || cand->npreds != 1 || !ir_ccmp_block(cand))
+          continue;
+        if (cand->succ[0] != other && cand->succ[1] != other)
+          continue;
+        x = cand, s = other, xi = i;
+        n = cand->succ[0] == other ? cand->succ[1] : cand->succ[0];
+      }
+      if (!x || n == b || n == x || n == s || s == x)
+        break;
+      // S の phi は、B から来る値と X から来る値が同じこと
+      int pb = -1, px = -1;
+      for (int i = 0; i < s->npreds; i++) {
+        if (s->preds[i] == b)
+          pb = i;
+        if (s->preds[i] == x)
+          px = i;
+      }
+      if (pb < 0 || px < 0)
+        break;
+      bool ok = true;
+      for (IrInst *in = s->first; in && ok; in = in->next)
+        if (in->op == IR_PHI && !in->repl && in->nargs == s->npreds)
+          ok = ir_resolve(in->args[pb]) == ir_resolve(in->args[px]);
+      if (!ok)
+        break;
+      // 変える
+      IrInst *xbr = x->last, *c2 = xbr->a;
+      c2->ccond = xi == 0 ? c1->cond : cc_inverse[c1->cond];   // B から X へ行く条件
+      if (x->succ[0] != n)
+        c2->cond = cc_inverse[c2->cond];                      // 成り立てば N
+      IrInst *head = c1;      // 続いた ccmp の頭（間にほかの命令を入れない）
+      while (head->c && head->c == head->prev)
+        head = head->c;
+      for (IrInst *in = x->first, *next; in != c2; in = next) {
+        next = in->next;
+        ir_remove(in);
+        ir_insert_before(head, in);
+      }
+      ir_remove(c2);
+      ir_insert_before(br, c2);
+      c2->c = c1;
+      br->a = c2;
+      b->succ[0] = n;
+      b->succ[1] = s;
+      for (int i = 0; i < n->npreds; i++)
+        if (n->preds[i] == x)
+          n->preds[i] = b;
+      ir_remove_edge(x, s);
+      x->reachable = false;
+      x->npreds = 0;
+      x->first = x->last = NULL;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 static void ir_optimize(void) {
   // 3 回まで。1 回まわして中間表現が変わらなければ、次の回も同じ結果なので止める（2026-11-15。出力は
   // 変わらない。ほとんどの関数は 2 回目で変わらなくなる）
@@ -4057,6 +4156,10 @@ static void ir_optimize(void) {
   ir_dce();
   ir_licm();
   ir_dce();
+  if (ir_ccmp_chain()) {    // a && b の比べを ccmp で続ける（2026-11-27）
+    ir_dominators();
+    ir_dce();
+  }
   if (ir_if_convert()) {    // 分岐を csel に（2026-11-26）
     ir_dominators();
     ir_dce();
@@ -4426,6 +4529,22 @@ static bool ir_arg_const(IrInst *in, int k) {
 }
 
 static int ir_tbz_bit(IrInst *c);
+
+// IR_SELECT が定数を選ぶだけか: 1・0 なら 1、0・1 なら -1（cset）、-1・0 なら 2、0・-1 なら -2（csetm）、ほかは 0
+static int ir_select_cset(IrInst *in) {
+  IrInst *b = in->b, *c = in->c;
+  if (b->op != IR_CONST || c->op != IR_CONST || b->fp || c->fp)
+    return 0;
+  if (b->imm == 1 && c->imm == 0)
+    return 1;
+  if (b->imm == 0 && c->imm == 1)
+    return -1;
+  if (b->imm == -1 && c->imm == 0)
+    return 2;
+  if (b->imm == 0 && c->imm == -1)
+    return -2;
+  return 0;
+}
 
 static bool ir_needs_reg(IrInst *v) {
   return v && v->uses > 0 && !ir_fused[v->id] && !(v->op == IR_CONST && v->imm == 0); // 0 は xzr
@@ -6020,7 +6139,22 @@ static void ir_emit_inst1(IrInst *in, IrBlock *bb, IrBlock *next_bb) {
     bool imm_b = ir_imm_operand(in, in->b);  // 定数がレジスタを持っていても即値で（2026-11-21）
     AOp a = imm_b ? ir_base_srcA(in->a, aX(16)) : ir_srcA(in->a, aX(16));    // 即値の形では 31 は sp
     bool w = ir_cmp_w(in);
-    if (imm_b) {
+    if (in->c) {
+      // ccmp a, b|#imm5, #nzcv, ccond: ccond が成り立たなければ、cond が偽になるフラグ（ir_ccmp_chain）
+      static const int8_t nzcv_false[] = {
+        [CC_EQ] = 0, [CC_NE] = 4, [CC_LT] = 0, [CC_LE] = 0, [CC_GT] = 4,
+        [CC_GE] = 8, [CC_LO] = 2, [CC_LS] = 2, [CC_HI] = 0, [CC_HS] = 0,
+      };
+      if (in->cond > CC_HS || in->ccond > CC_HS)
+        internal_error();
+      AOp b = imm_b && in->b->imm < 32 ? aI(in->b->imm) : ir_srcA(in->b, aX(17));
+      if (w) {
+        a = aWof(a);
+        if (b.kind == AO_REG)
+          b = aWof(b);
+      }
+      E4("ccmp", a, b, aI(nzcv_false[in->cond]), aCond(in->ccond));
+    } else if (imm_b) {
       E2("cmp", w ? aWof(a) : a, aI(in->b->imm));
     } else {
       AOp b = ir_srcA(in->b, aX(17));
@@ -6042,6 +6176,13 @@ static void ir_emit_inst1(IrInst *in, IrBlock *bb, IrBlock *next_bb) {
       E2("cmp", aWof(ir_base_srcA(in->a, aX(16))), aI(0));    // cmp の即値の形も 31 は sp
     } else {
       E2("cmp", ir_base_srcA(in->a, aX(16)), aI(0));
+    }
+    int k = ir_select_cset(in);
+    if (k) {
+      // 1・0（-1・0）を選ぶだけなら cset（csetm）。逆の並びは条件を逆に（2026-11-27）
+      E2(k == 1 || k == -1 ? "cset" : "csetm", ir_dstA(in), aCond(k > 0 ? cond : cc_inverse[cond]));
+      ir_finish_dstA(in);
+      return;
     }
     AOp t = ir_srcA(in->b, aX(16));
     AOp f = ir_srcA(in->c, aX(17));
@@ -6526,6 +6667,21 @@ static void ir_mark_fused(void) {
       c->b->uses--;     // 定数を作らない
     }
   }
+  // cset にする IR_SELECT の定数は作らない
+  for (int i = 0; i < ir_norder; i++)
+    for (IrInst *in = ir_order[i]->first; in; in = in->next)
+      if (in->op == IR_SELECT && ir_select_cset(in)) {
+        in->b->uses--;
+        in->c->uses--;
+      }
+  // ccmp の前の比較（ir_ccmp_chain）は、フラグだけを作る
+  for (int i = 0; i < ir_norder; i++)
+    for (IrInst *in = ir_order[i]->first; in; in = in->next)
+      if (in->op == IR_CMP && in->c) {
+        if (in->c->op != IR_CMP || in->c->next != in)
+          internal_error();
+        ir_fused[in->c->id] = true;
+      }
   // csel（IR_SELECT）のすぐ前の比較も同じ（2026-11-26）
   for (int i = 0; i < ir_norder; i++)
     for (IrInst *in = ir_order[i]->first; in; in = in->next) {

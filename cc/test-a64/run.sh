@@ -157,6 +157,19 @@ for seed in 1 2 3 4; do
     fi
 done
 
+echo "8f. 比べを続ける形（a && b を ccmp に。test-a64/ccmp_gen.py）が GCC と同じ結果"
+for seed in 1 2 3 4; do
+    python3 test-a64/ccmp_gen.py "$TMP/ccmp.c" $seed 300
+    if gcc -w -o "$TMP/ccmp_gcc" "$TMP/ccmp.c" && "$TMP/ccmp_gcc" >"$TMP/ccmp_gcc.out" &&
+       $CC -w -o "$TMP/ccmp_slim" "$TMP/ccmp.c" && "$TMP/ccmp_slim" >"$TMP/ccmp_slim.out" &&
+       cmp -s "$TMP/ccmp_gcc.out" "$TMP/ccmp_slim.out"; then
+        ok "種 $seed: $(wc -l < "$TMP/ccmp_gcc.out") 行"
+    else
+        ng "種 $seed"
+        diff "$TMP/ccmp_gcc.out" "$TMP/ccmp_slim.out" | head -5 | sed 's/^/       /'
+    fi
+done
+
 echo "8c. GCC と同じ結果になること（test-a64/gccmatch/*.c: va_arg、あふれの確かめなど）"
 for f in test-a64/gccmatch/*.c; do
     n=$(basename "$f" .c)

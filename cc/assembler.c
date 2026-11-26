@@ -2959,6 +2959,34 @@ static bool frag_insn(const IrRec *r) {
     }
     return false;
   case 'c':
+    // 条件の選択と ccmp（2026-11-27）。AO_COND の値は ir.inc の cc_name の番号（下の表で命令の条件の番号に）
+    if (n >= 2 && op[n - 1].kind == AO_COND && op[n - 1].imm >= 0 && op[n - 1].imm < 15) {
+      static const uint8_t code[15] = {0, 1, 11, 13, 12, 10, 3, 9, 8, 2, 4, 9, 12, 10, 5};
+      uint32_t cond = code[op[n - 1].imm];
+      if ((MN_IS("cset") || MN_IS("csetm")) && n == 2 && ao_reg(&op[0], &rd) && is_gpr(&rd)) {
+        Reg zr = {.kind = rd.kind, .num = 31};
+        emit_condsel(mn[4] == 'm', mn[4] != 'm', &rd, &zr, &zr, cond ^ 1);
+        return true;
+      }
+      if (MN_IS("csel") && n == 4 && ao_reg(&op[0], &rd) && is_gpr(&rd) && ao_reg(&op[1], &rn) &&
+          is_gpr(&rn) && ao_reg(&op[2], &rm) && is_gpr(&rm)) {
+        emit_condsel(0, 0, &rd, &rn, &rm, cond);
+        return true;
+      }
+      if (MN_IS("ccmp") && n == 4 && ao_reg(&op[0], &rn) && is_gpr(&rn) && op[2].kind == AO_IMM &&
+          op[2].imm >= 0 && op[2].imm < 16) {
+        uint32_t insn = (is64(&rn) ? 0x80000000 : 0) | 0x7A400000;
+        if (op[1].kind == AO_IMM && op[1].imm >= 0 && op[1].imm < 32)
+          insn |= 0x800 | (uint32_t)op[1].imm << 16;
+        else if (ao_reg(&op[1], &rm) && is_gpr(&rm) && is64(&rm) == is64(&rn))
+          insn |= rm.num << 16;
+        else
+          return false;
+        emit32(insn | (cond << 12) | (rn.num << 5) | (uint32_t)op[2].imm);
+        return true;
+      }
+      return false;
+    }
     if ((MN_IS("cmp") || MN_IS("cmn")) && n == 2 && ao_reg(&op[0], &rn) && is_gpr_or_sp(&rn)) {
       rd = (Reg){.kind = is64(&rn) || rn.kind == RK_SP ? RK_X : RK_W, .num = 31};
       bool sub = mn[2] == 'p';
