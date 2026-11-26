@@ -2,7 +2,7 @@
 # 実機で、カーネルの中のコンパイラの速さを測る（cc -c -o /dev/null の CPU サイクル。3 回の最小）。
 #   sh tools/slimcc/devbench.sh [KERNEL...]   （既定は標準の build/kslim/kernel8.img。リポジトリの一番上で）
 # カーネルを送って再起動し、25 秒待って（起動直後は CPU のクロックがそろわないことがある）から測る。
-# 比べるときは、実機の /src/cc/*.c が同じであること（nos.py pushdir build/selfsrc /src で変わる）。
+# 比べるときは、実機の /usr/src/kernel/cc/*.c が同じであること（nos.py pushdir build/selfsrc /usr/src/kernel で変わる）。
 # 最後に送ったカーネルが実機に残る（標準に戻すときは最後に build/kslim/kernel8.img を）。
 set -u
 cd "$(dirname "$0")/../.."
@@ -16,7 +16,7 @@ for k in "$@"; do
     for f in parse codegen; do
         best=
         for i in 1 2 3; do
-            c=$($N cmd " perf -e cycles cc -c -o /dev/null /src/cc/$f.c" 2>&1 | grep -i cycles | head -1 | awk '{print $1}' | tr -d ,)
+            c=$($N cmd " perf -e cycles cc -c -o /dev/null /usr/src/kernel/cc/$f.c" 2>&1 | grep -i cycles | head -1 | awk '{print $1}' | tr -d ,)
             [ -n "$c" ] || continue
             if [ -z "$best" ] || [ "$c" -lt "$best" ]; then best=$c; fi
         done

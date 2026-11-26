@@ -144,6 +144,19 @@ for seed in 1 2 3 4; do
     fi
 done
 
+echo "8e. if 変換（値を選ぶ小さな分岐を csel に。test-a64/select_gen.py）が GCC と同じ結果"
+for seed in 1 2 3 4; do
+    python3 test-a64/select_gen.py "$TMP/sel.c" $seed 300
+    if gcc -w -o "$TMP/sel_gcc" "$TMP/sel.c" && "$TMP/sel_gcc" >"$TMP/sel_gcc.out" &&
+       $CC -w -o "$TMP/sel_slim" "$TMP/sel.c" && "$TMP/sel_slim" >"$TMP/sel_slim.out" &&
+       cmp -s "$TMP/sel_gcc.out" "$TMP/sel_slim.out"; then
+        ok "種 $seed: $(wc -l < "$TMP/sel_gcc.out") 行"
+    else
+        ng "種 $seed"
+        diff "$TMP/sel_gcc.out" "$TMP/sel_slim.out" | head -5 | sed 's/^/       /'
+    fi
+done
+
 echo "8c. GCC と同じ結果になること（test-a64/gccmatch/*.c: va_arg、あふれの確かめなど）"
 for f in test-a64/gccmatch/*.c; do
     n=$(basename "$f" .c)

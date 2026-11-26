@@ -93,6 +93,7 @@ typedef enum {
   // の辺の分け方などは今までのまま（GCC も goto *p を 1 か所に集める）
   IR_INDBR,             // a の番地へ飛ぶ（br。後続は bb->succ のすべて）
   IR_LABELADDR,         // ラベルの番地（adr。imm は .L.jmp の番号）
+  IR_SELECT,            // a が 0 でなければ b、0 なら c（整数。csel。分岐をなくす if 変換 ir_if_convert。2026-11-26）
 } IrOp;
 
 // 浮動小数点の比較（fcmp）: NaN（順序なし）では <・<=・>・>=・== が偽、!= が真。
@@ -3199,7 +3200,7 @@ static bool ir_cse_candidate(IrInst *in) {
 }
 
 static bool ir_same_expr(IrInst *x, IrInst *y) {
-  return x->op == y->op && x->a == y->a && x->b == y->b && x->imm == y->imm && x->size == y->size &&
+  return x->op == y->op && x->a == y->a && x->b == y->b && x->c == y->c && x->imm == y->imm && x->size == y->size &&
          x->sign == y->sign && x->cond == y->cond && x->sym == y->sym && x->fsz == y->fsz &&
          x->wform == y->wform && x->nsw == y->nsw;
 }
@@ -3332,6 +3333,10 @@ static bool ir_use_low32(IrInst *in, IrInst *v) {
     return ir_fits(v, 32, true) || ir_fits(v, 32, false);
   case IR_PHI:
     return in->low32;
+  case IR_SELECT:     // 選ぶ値（b・c）は phi と同じ。条件（a）は IR_CBR と同じ
+    if (v == in->a && v != in->b && v != in->c)
+      return ir_fits(v, 32, true) || ir_fits(v, 32, false);
+    return in->low32 && v != in->a;
   default:
     return false;
   }
@@ -3343,7 +3348,8 @@ static void ir_mark_low32(void) {
     IrBlock *bb = ir_blocks[b];
     if (bb->reachable)
       for (IrInst *in = bb->first; in; in = in->next)
-        in->low32 = ir_is_nsw32(in) || (in->op == IR_PHI && !in->fp) || (in->op == IR_EXT && in->size == 4);
+        in->low32 = ir_is_nsw32(in) || ((in->op == IR_PHI || in->op == IR_SELECT) && !in->fp) ||
+                    (in->op == IR_EXT && in->size == 4);
   }
   for (bool changed = true; changed;) {
     changed = false;
@@ -3886,6 +3892,141 @@ static bool ir_mem2reg(void) {
   return true;
 }
 
+//
+// if 変換（2026-11-26）: 値を選ぶだけの小さな分岐を csel（IR_SELECT）にする。Cortex-A53 は分岐を読み違えると
+// 7〜8 サイクル止まり、コンパイラのような分岐の多いコードでは読み違いが多い（GCC は csel をよく使う）。
+// 形: ブロック B の終わりが IR_CBR(cond, T, F) で、
+//   ひし形: T・F ともに前任が B だけ、中身が分岐だけか安い計算（IR_IFCVT_OPS 個まで）、どちらも同じ J へ飛ぶ。
+//           J の前任は T と F だけ
+//   三角形: T（か F）の前任が B だけで、中身が分岐だけか安い計算、もう一方が J そのもの。J の前任は B と T（F）だけ
+// で、J の phi がすべて整数で IR_IFCVT_PHIS 個まで。T・F の計算を B の分岐の前に移し（止まらない・副作用のない
+// 整数の計算だけなので、先に計算してもよい）、phi を IR_SELECT にして、B を J へまっすぐ飛ぶようにする。
+// 計算を先にするので、片方の道しか通らないときより命令は増える。数を小さく抑える
+//
+#define IR_IFCVT_OPS 2
+#define IR_IFCVT_PHIS 2
+
+// 先に計算してよい（止まらない・副作用がない・安い整数の計算）
+static bool ir_ifcvt_ok(IrInst *in) {
+  if (in->fp)
+    return false;
+  switch (in->op) {
+  case IR_CONST: case IR_ADD: case IR_SUB: case IR_AND: case IR_OR: case IR_XOR:
+  case IR_SHL: case IR_SHR: case IR_SAR: case IR_NEG: case IR_NOT: case IR_EXT: case IR_BOOL: case IR_CMP:
+    return true;
+  default:
+    return false;
+  }
+}
+
+// 腕 arm（B の後の小さなブロック）の中身が、安い計算 IR_IFCVT_OPS 個までと、J への分岐だけか
+static bool ir_ifcvt_arm(IrBlock *arm, IrBlock *b, IrBlock *j) {
+  if (arm == b || arm == j || arm->npreds != 1 || arm->preds[0] != b || !arm->last || arm->last->op != IR_BR ||
+      arm->nsucc != 1 || arm->succ[0] != j)
+    return false;
+  int n = 0;
+  for (IrInst *in = arm->first; in != arm->last; in = in->next)
+    if (in->op == IR_PHI || !ir_ifcvt_ok(in) || ++n > IR_IFCVT_OPS)
+      return false;
+  return true;
+}
+
+// arm の計算（分岐の前まで）を pos の前に移す
+static void ir_ifcvt_hoist(IrBlock *arm, IrInst *pos) {
+  for (IrInst *in = arm->first, *next; in && in != arm->last; in = next) {
+    next = in->next;
+    arm->first = next;
+    next->prev = NULL;
+    ir_insert_before(pos, in);
+  }
+}
+
+static bool ir_if_convert(void) {
+  bool changed = false;
+  for (int bi = 0; bi < ir_nblocks; bi++) {
+    IrBlock *b = ir_blocks[bi];
+    IrInst *br = b->last;
+    if (!b->reachable || !br || br->op != IR_CBR || br->a->fp || b->nsucc != 2)
+      continue;
+    IrBlock *t = b->succ[0], *f = b->succ[1], *j;
+    IrBlock *ta, *fa;           // 腕（なければ NULL）。ta・fa から J に来る値が、真・偽のときの値
+    if (t != f && t->nsucc == 1 && f->nsucc == 1 && t->succ[0] == f->succ[0] && ir_ifcvt_arm(t, b, t->succ[0]) &&
+        ir_ifcvt_arm(f, b, t->succ[0])) {
+      j = t->succ[0], ta = t, fa = f;                       // ひし形
+    } else if (t->nsucc == 1 && t->succ[0] == f && ir_ifcvt_arm(t, b, f)) {
+      j = f, ta = t, fa = NULL;                             // 三角形（真のときだけ T を通る）
+    } else if (f->nsucc == 1 && f->succ[0] == t && ir_ifcvt_arm(f, b, t)) {
+      j = t, ta = NULL, fa = f;                             // 三角形（偽のときだけ F を通る）
+    } else {
+      continue;
+    }
+    if (j == b || j->npreds != 2)
+      continue;
+    // J の前任のうち、真のとき・偽のときに来る辺の番号
+    IrBlock *tp = ta ? ta : b, *fp = fa ? fa : b;
+    int ti = -1, fi = -1;
+    for (int i = 0; i < 2; i++) {
+      if (j->preds[i] == tp)
+        ti = i;
+      if (j->preds[i] == fp)
+        fi = i;
+    }
+    if (ti < 0 || fi < 0 || ti == fi)
+      continue;
+    int nphi = 0;
+    bool ok = true;
+    for (IrInst *in = j->first; in && ok; in = in->next) {
+      if (in->op != IR_PHI)
+        continue;
+      if (in->repl)
+        continue;
+      ok = !in->fp && in->nargs == 2 && ++nphi <= IR_IFCVT_PHIS;
+    }
+    if (!ok)
+      continue;
+    // 変える: 腕の計算を B の分岐の前へ（分岐のすぐ前の比較があればその前へ。比較と csel をまとめるため）、
+    // phi を IR_SELECT へ、B を J へまっすぐ
+    IrInst *pos = br->prev && br->prev == br->a && br->a->op == IR_CMP ? br->a : br;
+    if (ta)
+      ir_ifcvt_hoist(ta, pos);
+    if (fa)
+      ir_ifcvt_hoist(fa, pos);
+    for (IrInst *in = j->first; in; in = in->next) {
+      if (in->op != IR_PHI || in->repl)
+        continue;
+      IrInst *sel = ir_new(IR_SELECT);
+      sel->a = br->a;
+      sel->b = in->args[ti];
+      sel->c = in->args[fi];
+      sel->size = in->size;
+      sel->sign = in->sign;
+      ir_insert_before(br, sel);
+      in->repl = sel;
+    }
+    br->op = IR_BR;
+    br->a = NULL;
+    b->succ[0] = j;
+    b->nsucc = 1;
+    j->preds[0] = b;
+    j->npreds = 1;
+    for (IrInst *in = j->first; in; in = in->next)
+      if (in->op == IR_PHI && !in->repl)
+        in->nargs = 1;              // 来ないはず（phi はすべて select にした）
+    if (ta) {
+      ta->reachable = false;
+      ta->npreds = 0;
+    }
+    if (fa) {
+      fa->reachable = false;
+      fa->npreds = 0;
+    }
+    changed = true;
+  }
+  if (changed)
+    ir_fixup();
+  return changed;
+}
+
 static void ir_optimize(void) {
   // 3 回まで。1 回まわして中間表現が変わらなければ、次の回も同じ結果なので止める（2026-11-15。出力は
   // 変わらない。ほとんどの関数は 2 回目で変わらなくなる）
@@ -3912,6 +4053,10 @@ static void ir_optimize(void) {
   ir_dce();
   ir_licm();
   ir_dce();
+  if (ir_if_convert()) {    // 分岐を csel に（2026-11-26）
+    ir_dominators();
+    ir_dce();
+  }
 }
 
 //
@@ -5834,6 +5979,23 @@ static void ir_emit_inst1(IrInst *in, IrBlock *bb, IrBlock *next_bb) {
     ir_finish_dstA(in);
     return;
   }
+  case IR_SELECT: {
+    // a が 0 でなければ b、0 なら c（2026-11-26）。a が直前の比較ならその条件のまま（ir_mark_fused）、
+    // ほかは a を 0 と比べる（IR_CBR の cbnz と同じく、32 ビットに収まる値は w で）
+    int cond = CC_NE;
+    if (ir_fused[in->a->id]) {
+      cond = in->a->cond;
+    } else if (ir_fits(in->a, 32, true) || ir_fits(in->a, 32, false)) {
+      E2("cmp", aWof(ir_base_srcA(in->a, aX(16))), aI(0));    // cmp の即値の形も 31 は sp
+    } else {
+      E2("cmp", ir_base_srcA(in->a, aX(16)), aI(0));
+    }
+    AOp t = ir_srcA(in->b, aX(16));
+    AOp f = ir_srcA(in->c, aX(17));
+    E4("csel", ir_dstA(in), t, f, aCond(cond));
+    ir_finish_dstA(in);
+    return;
+  }
   case IR_LADDR:
     ir_add_imm(ir_dstA(in), aX(29), in->imm);
     ir_finish_dstA(in);
@@ -6263,6 +6425,13 @@ static void ir_mark_fused(void) {
     if ((c->op == IR_CMP || c->op == IR_FCMP) && c->bb == br->bb && c->next == br && c->uses == 1)
       ir_fused[c->id] = true;
   }
+  // csel（IR_SELECT）のすぐ前の比較も同じ（2026-11-26）
+  for (int i = 0; i < ir_norder; i++)
+    for (IrInst *in = ir_order[i]->first; in; in = in->next) {
+      IrInst *c = in->op == IR_SELECT ? in->a : NULL;
+      if (c && c->op == IR_CMP && c->next == in && c->uses == 1)
+        ir_fused[c->id] = true;
+    }
 }
 
 // 命令の並べ替え（sched.inc。-fno-schedule-insns2 でしない）は、ループの中のブロックだけにかける。
