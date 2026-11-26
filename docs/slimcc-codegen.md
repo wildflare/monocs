@@ -298,6 +298,14 @@ sh tools/slimcc/devbench.sh build/kernel8.img build/kslim/kernel8.img   # 両方
   広げる（ir_dup_ok）。ir_count_uses の内側のループは分岐 1 つになり、`in->args` の読み出しもループの外に出たが、
   条件を 2 か所に出す分で命令の数が 0.8% 増え、実機のカーネルの中のコンパイラが parse.c 526 → 534M、codegen.c
   1,153 → 1,177M と遅くなった（展開には使わない形でも命令の数は同じだった）。戻した。
+- （2026-11-27）TLS の変数の読み書きを、番地（IR_TLSADDR。add 2 つ）を作って持つ代わりに、上位を add で x16 に作り、
+  下位を読み書きの命令の `:tprel_lo12_nc:` に入れる形（GCC と同じ。R_AARCH64_TLSLE_LDST*_TPREL_LO12_NC は slimld が
+  もともと解ける。内蔵アセンブラに AOM_TPLO と `[x, :tprel_lo12_nc:sym+imm]` を足し、GNU as と同じ .o になった）。
+  ループの中は変えない。ir_alloc_nz の退避の要るレジスタは 7 → 4 になったが、実機のカーネルの中のコンパイラは
+  番地を 2 回まで使うときだけでも parse.c 518 → 521M・codegen.c 1,224 → 1,234M、全部なら 523M・1,236M と遅くなった
+  （読み書きのたびに直前の add で番地を作ると、A53 は番地を 1 サイクル早く要るので待つ。前は番地を前もって作って
+  持っていた）。戻した。消した番地をインライン展開の大きさに数えないと、展開が増えて別の差が混ざることにも注意。
+  するなら、関数の中の TLS の変数を 1 つの土台（GCC のセクションのアンカー）からの決まった差で読む形。
 - インライン展開の大きさ（IR_INLINE_SIZE 12）を 20〜40 に: カーネルの中のコードは約 3% 速いが、アプリと
   自分のコンパイルの仕事が増え、全体では遅くなった（2026-11-15）。カーネルを作るときだけ変えるには、
   セルフホストのビルドにも渡す仕組みが要る。
@@ -550,4 +558,6 @@ sh tools/slimcc/devbench.sh build/kernel8.img build/kslim/kernel8.img   # 両方
   parse.c 522 → 518M、codegen.c 1,234 → 1,224M（0.8%。前後のカーネルを交互に 2 回ずつ）。
 - 確かめ: cmp_o.sh、make cc-test（gccmatch/alias.c を含む）、verify.sh（quick なし。すべて一致）。
 - 同じ関数でまだ違うもの: 入口で退避の要るレジスタを 7 つ保存（GCC は 3 つで、うち 1 つは速い道に入ってから。
-  shrink-wrapping）。`if (!active) return malloc(n);` のような早く戻る道でも全部保存している。
+  shrink-wrapping）。`if (!active) return malloc(n);` のような早く戻る道でも全部保存している。7 つのうち多くは、
+  TLS の変数の番地を呼び出しをまたいで持つため（GCC は関数の中の TLS の変数を 1 つの土台から読むので 1 つで済む）。
+  番地を読み書きの命令に入れる形は試して遅くなった（5. の見送り）。
