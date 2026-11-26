@@ -254,8 +254,24 @@ sh tools/slimcc/devbench.sh build/kernel8.img build/kslim/kernel8.img   # 両方
 - 同じ比べで見えた残り（次の候補）:
   - `mov` が命令の 18%（`mov x0, xN` だけで 6,683 個 / 94,332）。値を作るときに、行き先の引数のレジスタを
     ヒントにする（呼び出しまでに別の呼び出しをまたがない値）。
-  - bool を返す関数の結果を `uxtb` で広げてから `cbz`（200 か所）。GCC は `tbz w0, #0`。1 ビットを見る分岐の
-    `tbz`・`tbnz`（GCC は 597 か所、slimcc は 0。`tst` + `b.cond` の 2 命令）。
+  - （済み。下の 10）bool を返す関数の結果を `uxtb` で広げてから `cbz`（200 か所）。GCC は `tbz w0, #0`。
   - `a && b`・`a || b` の 1・0 を選ぶだけの形（合流先の前任が 3 つ）は if 変換にかからない（`ccmp` と `cset` にできる）。
   - long double を返す・比べる定数の評価（parse.c の eval2・eval_cmp・eval_double など）は今までのコード生成のまま
     （GCC の 1.8 倍の命令。long double を中間表現で扱うのは 2026-11-07 にユーザーと合意して見送り）。
+
+## 10. tbz・tbnz（2026-11-27）
+
+- 1 ビットを見る分岐を tbz・tbnz にする（cc/ir.inc の ir_mark_fused・ir_tbz_bit、IR_CBR の出力）:
+  - _Bool を返す呼び出しの結果を、すぐ後の分岐だけに使うとき: `tbz w0, #0`（前は `uxtb w10, w0` + `cbz w10`。
+    AAPCS64 で _Bool は下位 8 ビットに 0 か 1。IrInst の rbool）。
+  - `x & 2^k`（定数）を、すぐ後の分岐だけに使うとき: `tbz x, #k`（前は定数を作る `movz` + `and` + `cbz`）。
+- tbz・tbnz の飛べる距離は ±32KB。関数の記録の数 × 4 が 28KB 以上なら、出力の前に全部を「逆の条件で次の
+  命令を飛び越し、b で飛ぶ」形にする（ir_relax_tbz。アセンブラは届かないと誤りにする）。
+- 内蔵アセンブラのかけらの道（frag_insn）でも tbz・tbnz を直接組み立てる（最初は文字列の道を通っていて、
+  命令が減ったのにコンパイラが 0.5% 遅くなった）。
+- 効果: 命令の数 parse.c 28,888 → 28,475（1.4% 減）。実機のカーネルの中のコンパイラ parse.c 561 → 558M、
+  codegen.c 1,198 → 1,197M（前後のカーネルを交互に 2 回ずつ）。
+- 試験: cc/test-a64/gccmatch/tbz.c（いろいろな型・ビットの位置、_Bool を返す関数、32KB を超える関数を GCC と比べる）。
+  確かめ: make cc-test、cmp_o.sh、verify.sh（quick なし。すべて一致）。
+- まだ: `x & mask`（2^k でない、論理即値にできるもの）の `tst x, #mask` + `b.cond`、`and`・`orr`・`eor` の論理即値
+  （今は定数を movz で作る）。

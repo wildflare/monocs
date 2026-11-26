@@ -2981,6 +2981,15 @@ static bool frag_insn(const IrRec *r) {
       return true;
     }
     return false;
+  case 't':     // tbz・tbnz（2026-11-27）
+    if ((MN_IS("tbz") || MN_IS("tbnz")) && n == 3 && ao_reg(&op[0], &rd) && is_gpr(&rd) &&
+        op[1].kind == AO_IMM && op[1].imm >= 0 && op[1].imm < reg_width(&rd) && ao_target(&op[2])) {
+      add_fixup(FX_TST14, 0, true, ao_target(&op[2]), 0);
+      emit32(((uint32_t)(op[1].imm >> 5) << 31) | (mn[2] == 'n' ? 0x37000000 : 0x36000000) |
+             ((uint32_t)(op[1].imm & 31) << 19) | rd.num);
+      return true;
+    }
+    return false;
   case 'b':
     if (n != 1 || !ao_target(&op[0]))
       return false;

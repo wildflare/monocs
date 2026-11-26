@@ -136,6 +136,8 @@ struct IrInst {
   // FSQRT の引数が負にならない（二乗の和など。ir_mark_sqrt）: errno のために sqrt を呼ぶことがないので、
   // 確かめずに fsqrt だけにし、呼び出しとしても扱わない
   bool sqrt_nonneg;
+  // CALL の戻り値が _Bool（0 か 1。AAPCS64 で下位 8 ビットに入る）。すぐ後の分岐だけに使うなら tbz w0, #0（2026-11-27）
+  bool rbool;
   // LOAD・STORE の型の組（ir_tbaa。0 は何とでも重なりうる）。組の違う読み書きは重ならない（C の型の規則。
   // -fno-strict-aliasing ではいつも 0）
   uint8_t tbaa;
@@ -1608,8 +1610,10 @@ static IrInst *ir_funcall(Node *node) {
   }
   if (struct_rtn)
     return ir_laddr(in->rtn_slot);
-  if (rty->kind == TY_BOOL)
+  if (rty->kind == TY_BOOL) {
+    in->rbool = true;
     return ir_un(IR_BOOL, ir_ext(in, 1, false));
+  }
   return in;
 }
 
@@ -4421,6 +4425,8 @@ static bool ir_arg_const(IrInst *in, int k) {
   return a->op == IR_CONST && !a->fp && a->imm != 0 && !(in->argtys && in->argtys[k]);
 }
 
+static int ir_tbz_bit(IrInst *c);
+
 static bool ir_needs_reg(IrInst *v) {
   return v && v->uses > 0 && !ir_fused[v->id] && !(v->op == IR_CONST && v->imm == 0); // 0 は xzr
 }
@@ -5195,6 +5201,45 @@ static void frag_peep_jmp(void) {
   nfrag_order = j;
 }
 
+// tbz・tbnz の飛べる距離は ±32KB。関数の大きさの見積もり（記録 1 つを 1 命令、文字列の行は 1 行を 1 命令。
+// ラベル・ディレクティブも数えるので多めに出る）が 28KB 以上なら、全部の tbz・tbnz を「逆の条件で次の命令を
+// 飛び越し、b で飛ぶ」形にする（2026-11-27）
+TLS static int ir_ntbz;     // この関数で出した tbz・tbnz の数
+
+static void ir_relax_tbz(void) {
+  int ntbz = ir_ntbz;
+  ir_ntbz = 0;
+  if (!ntbz || ir_nrecs * 4 < 28 * 1024)
+    return;
+  int n = ir_nrecs;
+  for (int k = 0; k < 2 * ntbz; k++)
+    ir_rec_reserve(), ir_nrecs++;
+  int j = ir_nrecs;
+  for (int i = n - 1; i >= 0; i--) {
+    IrRec r = ir_recs[i];
+    if (r.kind != IRR_INSN || (strcmp(r.mn, "tbz") && strcmp(r.mn, "tbnz"))) {
+      ir_recs[--j] = r;
+      continue;
+    }
+    char lb[64];
+    int len = snprintf(lb, sizeof(lb), ".L.ir.tbz.%" PRIi64, count());
+    char *name = ir_rec_store(lb, len);
+    lb[len++] = ':';
+    ir_recs[--j] = (IrRec){ir_rec_store(lb, len), len, IRR_LINE};
+    IrRec b = r;
+    b.mn = "b";
+    b.nop = 1;
+    b.op[0] = r.op[2];
+    b.op[1] = b.op[2] = b.op[3] = (AOp){0};
+    ir_recs[--j] = b;
+    r.mn = !strcmp(r.mn, "tbz") ? "tbnz" : "tbz";
+    r.op[2] = (AOp){.kind = AO_TEXT, .s = name};
+    ir_recs[--j] = r;
+  }
+  if (j != 0)
+    internal_error();
+}
+
 static void ir_rec_write(FILE *out) {
   if (!opt_direct) {
     ir_rec_write_text(out);
@@ -5898,6 +5943,8 @@ static void ir_emit_inst1(IrInst *in, IrBlock *bb, IrBlock *next_bb) {
       [IR_UDIV] = "udiv", [IR_AND] = "and", [IR_OR] = "orr", [IR_XOR] = "eor",
       [IR_SHL] = "lsl", [IR_SHR] = "lsr", [IR_SAR] = "asr",
     };
+    if (ir_fused[in->id])
+      return;   // x & 2^k を分岐（tbz・tbnz）とまとめた（IR_CBR が出す）
     // add・sub の即値の形では、番号 31 は xzr ではなく sp（定数 0 の入力は mov で x16 に。2026-11-21、QuickJS）
     bool imm_b = ir_imm_operand(in, in->b);  // 定数がレジスタを持っていても即値で（2026-11-21）
     AOp a = imm_b && (in->op == IR_ADD || in->op == IR_SUB) ? ir_base_srcA(in->a, aX(16)) : ir_srcA(in->a, aX(16));
@@ -6170,7 +6217,7 @@ static void ir_emit_inst1(IrInst *in, IrBlock *bb, IrBlock *next_bb) {
       }
       return;
     }
-    if (!in->size || (!in->reg && !in->spill))
+    if (!in->size || (!in->reg && !in->spill) || ir_fused[in->id])
       return;
     if (in->fp) {
       E2("fmov", ir_fdstA(in), aF(0, in->fsz));
@@ -6399,6 +6446,29 @@ static void ir_emit_inst1(IrInst *in, IrBlock *bb, IrBlock *next_bb) {
     static const char *const bcc[] = {"b.eq", "b.ne", "b.lt", "b.le", "b.gt", "b.ge", "b.lo", "b.ls",
                                       "b.hi", "b.hs", "b.mi", "b.ls", "b.gt", "b.ge", "b.pl"};
     _Static_assert(sizeof(bcc) / sizeof(*bcc) == sizeof(cc_name) / sizeof(*cc_name), "bcc");
+    if (ir_fused[in->a->id] && (in->a->op == IR_CALL || in->a->op == IR_AND)) {
+      // tbz・tbnz（大きな関数では、出力の前に ir_relax_tbz が届く形に直す）
+      AOp r;
+      int k;
+      if (in->a->op == IR_CALL) {
+        r = aR('w', 0);
+        k = 0;
+      } else {
+        k = ir_tbz_bit(in->a);
+        r = ir_srcA(in->a->a, aX(16));
+        if (k < 32)
+          r = aWof(r);
+      }
+      ir_ntbz++;
+      if (t == next_bb) {
+        E3("tbz", r, aI(k), ir_labelA(f));
+      } else {
+        E3("tbnz", r, aI(k), ir_labelA(t));
+        if (f != next_bb)
+          E1("b", ir_labelA(f));
+      }
+      return;
+    }
     if (ir_fused[in->a->id]) {
       int c = in->a->cond;
       if (t == next_bb) {
@@ -6426,6 +6496,19 @@ static void ir_emit_inst1(IrInst *in, IrBlock *bb, IrBlock *next_bb) {
   internal_error();
 }
 
+// x & 2^k（定数）なら k、ほかは -1
+static int ir_tbz_bit(IrInst *c) {
+  if (c->op != IR_AND || c->fp || !c->b || c->b->op != IR_CONST || c->a->op == IR_CONST)
+    return -1;
+  uint64_t m = (uint64_t)c->b->imm;
+  if (!m || (m & (m - 1)))
+    return -1;
+  int k = 0;
+  while (!(m >> k & 1))
+    k++;
+  return k;
+}
+
 // 比較のすぐ後の条件分岐で、その比較の値がほかで使われなければ、まとめて b.cond にする
 static void ir_mark_fused(void) {
   for (int i = 0; i < ir_norder; i++) {
@@ -6435,6 +6518,13 @@ static void ir_mark_fused(void) {
     IrInst *c = br->a;
     if ((c->op == IR_CMP || c->op == IR_FCMP) && c->bb == br->bb && c->next == br && c->uses == 1)
       ir_fused[c->id] = true;
+    // 1 ビットを見る分岐（tbz・tbnz。2026-11-27）: _Bool を返す呼び出しの結果、x & 2^k
+    if (c->op == IR_CALL && c->rbool && c->next == br && c->uses == 1)
+      ir_fused[c->id] = true;
+    if (ir_tbz_bit(c) >= 0 && c->next == br && c->uses == 1) {
+      ir_fused[c->id] = true;
+      c->b->uses--;     // 定数を作らない
+    }
   }
   // csel（IR_SELECT）のすぐ前の比較も同じ（2026-11-26）
   for (int i = 0; i < ir_norder; i++)
@@ -6499,6 +6589,7 @@ TLS static FILE *ir_rec_out;  // 記録の間の本当の出力先
 
 // 記録をやめて、output_file を元に戻す（途中であきらめたとき・エラーで抜けたとき）
 static void ir_rec_abort(void) {
+  ir_ntbz = 0;
   if (!ir_rec_out)
     return;
   ir_rec_on = false;
@@ -6532,6 +6623,7 @@ static void ir_emit_fn(Obj *fn) {
   ir_side_buf = NULL;
   output_file = out;
   ir_rec_out = NULL;
+  ir_relax_tbz();
   ir_rec_write(out);
 }
 
