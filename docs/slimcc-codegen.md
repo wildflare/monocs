@@ -7,7 +7,82 @@ GCC 版より遅い分は、slimcc の出すコードを良くして縮める。
 
 コンパイラ自身を速くする方針は `docs/slimcc-compile-speed.md`（2026-11-21）。
 
-## 1. 今の位置（2026-11-16）
+## 0. 再開するとき（2026-11-27 時点。まずここを読む）
+
+### 今の位置
+
+実機（Zero 2 W、1000MHz）のカーネルの中のコンパイラ（`sh tools/slimcc/devbench.sh`、`cc -c -o /dev/null`、3 回の最小）:
+
+| | parse.c | codegen.c |
+|---|---|---|
+| 2026-11-26（if 変換の前） | 565M | 1,200M |
+| 2026-11-27（8b4c519） | 523M | 1,147M |
+
+- 2 世代目の slimcc の .text（verify.sh の最後）: 575,380 → 514,932 バイト。
+- Pi 5 の bench.sh: nbody 402ms（GCC -O2 301ms）、primes 1,025ms（1,007ms）、strhash 399ms（402ms。GCC に並んだ）。
+- 2026-11-27 に入れたもの（下の 9〜14）: 引数の定数を x0〜x7 に直接、tbz・tbnz、ccmp・cset、呼び出しのある関数でも
+  x0〜x7 を値に（いちばん効いた。3〜4%）、退避の stp・ldp、memcpy のある関数でも x0〜x5、定数の計算の直し。
+  どれも main にコミット済み（GitHub には未 push）。実機は 8b4c519 のカーネルで動いている。
+
+### いちばん確かな探し方（14）
+
+同じ仕事を GCC 版と slimcc 版のカーネルで動かし、関数ごとの命令の数を比べる。差の大きい関数の -S を読む。
+
+```sh
+make && make kernel-gcc
+export NOS_HOST=192.168.3.96
+N="python3 tools/uart/nos.py"
+$N cmd ' perf record -e inst -p 20000 -n 400 cc -c -o /dev/null /usr/src/kernel/cc/codegen.c' > slim.txt
+$N kernel build/kernel8.img; sleep 25
+$N cmd ' perf record -e inst -p 20000 -n 400 cc -c -o /dev/null /usr/src/kernel/cc/codegen.c' > gcc.txt
+$N kernel build/kslim/kernel8.img          # 標準に戻す
+join <(awk '$3=="kernel"{print $4, $2}' slim.txt | sort) <(awk '$3=="kernel"{print $4, $2}' gcc.txt | sort) |
+  awk '{print $2-$3, $2, $3, $1}' | sort -rn | head -30
+```
+
+- `-p 10000` だと slimcc 版は記録があふれる（65,536 個）。`-p 20000` で 3.5 万個ほど。
+- 関数の -S: `cc/slimcc-monocs -std=c23 -nostdinc -isystem cc/slimcc_headers/include -isystem build/picolibc-install/include -Icc -DSLIMCC_LIBRARY -S -o - cc/FILE.c`
+  （`make -C cc slimcc-monocs` で作り直してから）。
+- 命令の種類ごとに GCC と数を比べるのは、GCC のインライン展開の差が混ざるので、手がかり程度。
+- 2026-11-27 の比べ（8b4c519 の前。GCC 版 24,771、slimcc 版 35,099）で差の大きかったもの: get_entry_h（直した）、
+  ir_linear_scan（1,012 対 785）、ir_emit_inst1（431 対 223）、ir_mem2reg（711 対 505）、ir_alloc_nz・zone_malloc（確保）、
+  ir_mark_low32、new_token、vfprintf（long double のため今までのコード生成）。
+
+### 次の候補（効きそうな順）
+
+1. **switch の表引き**（次にやる。ユーザーに提案済み、まだ始めていない）: ir_emit_inst1 は `in->op` の大きな switch で、
+   GCC の約 2 倍の命令。slimcc は switch をいつも二分探索（ir_switch_tree。比べと分岐を 6 回ほど）、GCC は密なら表引き。
+   コンパイラの熱い所はほとんど op・字句の種類の switch なので、広く効く見込み。
+   - 形の案: case の範囲が密（例: 値の幅が case の数の 2〜3 倍以内、case が 8 個以上）なら、`v - lo` を符号なしで幅と比べて
+     default へ、表から行き先を読んで飛ぶ。
+   - 中間表現: 多方向の分岐は計算型の goto の IR_INDBR がある（後続を bb->succ に全部持つ。IR_LABELADDR・jmp_id の
+     .L.jmp.N）。表の作り方は 2 通り: (a) .rodata に `.word .L.case - .L.base` の相対の表（GCC と同じ。内蔵アセンブラが
+     ラベルの差を数にできるか確かめる。かけらの道でも要る）、(b) 関数の中に `b .L.case` を並べた表へ `adr` + 番号 × 4 で飛ぶ
+     （表も分岐も 1 命令ずつ増えるが、データもリロケーションも要らず簡単）。まず (b) で効き目を測るのがよさそう。
+   - 気をつけること: 二分探索の葉の if 変換・ccmp との関係、IR_INDBR の後続が多いブロックの SSA を抜けるときの辺の分け方、
+     命令の並べ替え（sched.inc は br を区切りにする）、tbz の 32KB の書き直し（ir_relax_tbz）のように、表の分岐の届く範囲。
+   - 試験: make cc-test の 8d（cc/test-a64/switch_gen.py。型・端の値・範囲・default の有無・落ちる流れの switch 300 個 × 種 4 つを
+     GCC と比べる）を、密な switch が多く出るように広げる。
+2. 呼び出しをまたぐ値の退避（12 の「まだ」）、構造体を渡す呼び出しのある関数でも x0〜x7。
+3. 小さなもの: csinc（`c ? x + 1 : x`）、範囲の確かめ（`x >= A && x < B` を sub と符号なしの比べ 1 つに）、
+   論理即値（`and x, x, #0xff` を定数を作らずに）、`x & mask`（2^k でない）の `tst`、合流の写しの定数（`movz` + `mov`、
+   約 9 万命令で 160 か所）、末尾の呼び出し（707 関数のうち 216 か所。perf の -g・落ちたときの呼び出し元が 1 つ減る）。
+
+### 2026-11-27 に学んだこと（同じことでつまずかない）
+
+- 新しい命令を出すようにしたら、内蔵アセンブラのかけらの道（cc/assembler.c の frag_insn）でも直接組み立てる。
+  でないと文字列の道を通り、命令が減ってもコンパイラが遅くなる（tbz・ccmp で 0.5% 遅くなった）。cmp_o.sh で .o が同じか確かめる。
+- 命令が減っても実機で遅くなることがある: ループの反転を広げたもの（命令 +0.8%・1.5〜2% 遅い。戻した）、ccmp
+  （命令・分岐・読み違いは減ったが命令キャッシュのミスが増えた）。必ず前後のカーネルを交互に測る。命令の数・分岐・
+  キャッシュは `perf -e inst,br,br-miss,l1i-miss cc -c -o /dev/null ...`。
+- GCC と比べる試験に未定義動作（符号つきのあふれ）を入れない。GCC の -O0・-O2・-fwrapv で出力が同じか、
+  `gcc -fsanitize=undefined` で確かめる（run.sh は `gcc -w`（-O0）と比べる）。
+- `git stash` で前のコンパイラと比べた後は、作り直しが漏れることがある（古いコンパイラの結果で「誤り」に見えた）。
+  `touch cc/ir.inc` してから `make -C cc slimcc slimcc-monocs`。
+- verify.sh はコンパイラを作り直すので、流している間に cc/ を書き換えない（直しは別のファイルに用意しておく）。
+- 実機は Wi-Fi だけ（NOS_HOST=192.168.3.96）。前のカーネルは build の外（作業用のフォルダ）に写してから比べる。
+
+## 1. 今の位置（2026-11-16。今の数字は 0. にある）
 
 実機（Zero 2 W、1000MHz）で、カーネルの中のコンパイラの `cc -c -o /dev/null`（CPU サイクル、3 回の最小。
 `sh tools/slimcc/devbench.sh`）:
@@ -223,11 +298,10 @@ sh tools/slimcc/devbench.sh build/kernel8.img build/kslim/kernel8.img   # 両方
   - Clang・LLVM: C++ で GCC より大きい。
 - 小さくて GCC 並みのコードを出すものはない（ベクトル化・レジスタの割り当てなどの重い仕組みが要るため）。
 
-### 次にやるなら（4. の候補から。始める前に今の数字を測り直す）
+### 次にやるなら
 
-1. 呼び出しをまたぐ値のレジスタ（入口・出口の保存・復元が GCC より多い。カーネルの中のコンパイラにも広く効く見込み）。
-2. 定数の掛け算・ループの番地の計算・ldp・stp（nbody などの計算）。
-3. 末尾の呼び出し・x0 の割り当て（小さな直しで命令が確実に減る）。
+2026-11-27 から、上の「0. 再開するとき」の「次の候補」を見る（ここにあった 3 つのうち、定数の掛け算・ldp・stp・x0 の
+割り当ては済んだ）。
 
 ## 8. if 変換（csel。2026-11-26）
 
