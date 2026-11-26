@@ -82,6 +82,60 @@ join <(awk '$3=="kernel"{print $4, $2}' slim.txt | sort) <(awk '$3=="kernel"{pri
 - verify.sh はコンパイラを作り直すので、流している間に cc/ を書き換えない（直しは別のファイルに用意しておく）。
 - 実機は Wi-Fi だけ（NOS_HOST=192.168.3.96）。前のカーネルは build の外（作業用のフォルダ）に写してから比べる。
 
+## 0.1 ターゲットに依存するところ（2026-11-27。別の CPU を足すときの手がかり）
+
+ユーザーの「将来違う CPU を使う場合に備えたい」から。今すぐ全部を作り替えず（使わない仕組みを先に作らない）、
+(1) 中間表現のコード生成を「ターゲットに依存しない部分」と「AArch64」のファイルに分け、(2) 残る AArch64 の前提を
+ここにまとめた。別の CPU を使うと決まったら、その CPU に合わせてここから分けていく。
+
+### ファイルの分け方
+
+| ファイル | ターゲット | 中身 |
+|---|---|---|
+| cc/ir.inc | 依存しない（下の「ir.inc に残る前提」を除く） | 中間表現を作る・最適化・SSA を抜ける・生存区間・線形走査の手順・全体の流れ（ir_gen_fn） |
+| cc/ir_a64.inc | AArch64 | レジスタの組と順・呼び出し規約で決まったレジスタ（ir_low_ok・ir_fixed_hints）・即値（ir_imm_operand・ir_mul_shape）・レジスタなしで使える定数（ir_target_free_const） |
+| cc/ir_a64_emit.inc | AArch64 | 命令の記録とかけら、tbz の書き直し、命令ごとの出力（ir_emit_inst1）、比較と分岐をまとめる印（ir_mark_fused）、フレームの入口と出口 |
+| cc/sched.inc | Cortex-A53 | 命令の並べ替えの模型（遅延・同時に出せる組。tools/perf/a53lat.c で測った値） |
+| cc/codegen.c | AArch64 | 今までのコード生成（中間表現で扱えない関数）と、呼び出し規約の分類（classify・calling_convention） |
+| cc/assembler.c | AArch64 | 内蔵アセンブラ（命令の組み立て、かけらの道 frag_insn） |
+| cc/ld.c・cc/memlink.c | AArch64 | ELF のリロケーション、範囲外の分岐の中継（AAPCS64 の IP0）、TLS の配置 |
+| cc/rt/ | AArch64 | long double（binary128）の演算（AAPCS64 の long double）、__clear_cache（dc・ic） |
+| cc/platform/*.c、preprocess.c の init_macros | AArch64 | ターゲットの名前・パス・予定義マクロ（`__aarch64__`・`__ARM_*`） |
+| cc/type.c・parse.c | AArch64 の ABI | char は符号なし、`_BitInt`・`__int128` の大きさと境界、名前のないビットフィールド、va_list の形（preprocess.c） |
+| ほかの前処理・字句・構文解析・型・omp.inc | 依存しない | |
+
+2026-11-27 の分け方は、中身を動かしただけ（出すコードは 1 バイトも変わらない。cmp_s.sh・cmp_o.sh で確かめた）。
+
+### ir.inc に残る前提（ターゲットに聞く形にしていないもの）
+
+- 値の表し方: 整数を 64 ビットのレジスタに型に合わせて拡張して持つ。32 ビットの計算を w レジスタでする印
+  （wform・nsw の w の命令・low32・ir_cmp_w・ir_use_low32・ir_nsw_w）。RISC-V（64 ビット）も *W の命令があるので
+  近いが、上位ビットの扱い（RISC-V は 32 ビットの結果を符号拡張、AArch64 の w はゼロ拡張）が違う。
+- 番地の形（ir_fold_addresses）: `[base + imm]`（-256〜4096 × 大きさ）、`[base + idx << log2(大きさ)]`。ターゲットごとに
+  使える形と範囲が違う（RISC-V は `[base + imm12]` だけ）。
+- csel（IR_SELECT・ir_if_convert）、ccmp（ir_ccmp_chain・CMP の c と ccond）、tbz（ir_tbz_bit）、cset、積和
+  （ir_fp_contract の IR_FMADD など）、fsqrt・fabs を前提にした変形。条件の番号（CC_*・cc_name・cc_inverse）は
+  AArch64 の条件の並び。ない CPU では、変形を止める印（例: ir_target_has_ccmp）をターゲットの記述に足す。
+- スレッドポインタ（IR_TP = tpidr_el0）と TLS の番地（local-exec・initial-exec）。
+- フレーム: x29 から下に退避・局所変数・逃がした値（ir_frame・spill・ofs が x29 からの負のオフセット）。
+  スタックで渡された引数は x29 + 16 から。インラインアセンブリのある関数は x19・x20 を [x29 - 16] に。
+- 呼び出し規約で決まる中間表現の形: 構造体を x0・x1（HFA は v0〜v3）で受け渡す（IR_PARAM_STRUCT・SROA の語・
+  IR_X1）、大きな構造体の戻り値の領域 x8、va_arg の手順（ir_va_arg。AAPCS64 の va_list）、引数のレジスタの番号
+  （argregs が x0〜x7・v0〜v7）、_Bool の戻り値は下位 8 ビット（rbool）。
+- インラインアセンブリのオペランドを x0〜x7・v0〜v7 に置く、アトミック操作（IR_CAS・IR_XCHG）が x0〜x5 を使う。
+- 即値の目安が散らばっているところ（LICM の「即値に入る定数は数えない」、ir_alloc の 4096 は別もの）。
+
+### 別の CPU のとき（見込み）
+
+- **同じ AArch64 の別のコア**（Pi 4 の Cortex-A72、Pi 5 の A76 など）: 命令は同じ。要るのは sched.inc の模型をコアごとに
+  選べるようにする（-mcpu。表を測り直す）、使える命令の切り替え（ARMv8.1 の LSE のアトミック命令、ARMv8.2 など）、
+  cc/platform と予定義マクロ。if 変換の数（IR_IFCVT_OPS）・展開の大きさなどの目安も、順不同に実行するコアでは測り直す。
+- **別の命令セット**（RISC-V・x86-64 など）: ir_a64.inc・ir_a64_emit.inc に当たる 2 つのファイル、アセンブラ、リロケーション、
+  rt/、platform を新しく作る。ir.inc は、上の「残る前提」をターゲットの記述に聞く形に直してから共有する。
+  codegen.c（今までのコード生成）は中間表現で扱えない関数のためのものなので、新しいターゲットでは、まず中間表現で
+  扱えない関数をなくす（long double・va_start のある可変長引数の関数・setjmp）か、そのターゲットの分も作る。
+- OS（Monocs）の側の CPU に依存するところ（boot.S・vectors.S・MMU・例外・SMP のスピンテーブル・PMU など）は、この文書の外。
+
 ## 1. 今の位置（2026-11-16。今の数字は 0. にある）
 
 実機（Zero 2 W、1000MHz）で、カーネルの中のコンパイラの `cc -c -o /dev/null`（CPU サイクル、3 回の最小。

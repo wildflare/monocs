@@ -120,7 +120,7 @@ $(BUILD)/lwip/%.o: $(LWIP)/%.c | $(PICOLIBC_LIB)
 
 # 第三者のコードなので警告は出さない（改造しないため）
 # slimcc-a64 は GNU C17 で書かれている。SLIMCC_LIBRARY でゾーン（cc/zone.c）を使う
-$(BUILD)/slimcc/%.o: $(SLIMCC)/%.c $(SLIMCC)/slimcc.h $(SLIMCC)/libslimcc.h $(SLIMCC)/ld.h $(SLIMCC)/ir.inc $(SLIMCC)/sched.inc | $(PICOLIBC_LIB)
+$(BUILD)/slimcc/%.o: $(SLIMCC)/%.c $(SLIMCC)/slimcc.h $(SLIMCC)/libslimcc.h $(SLIMCC)/ld.h $(SLIMCC)/ir.inc $(SLIMCC)/ir_a64.inc $(SLIMCC)/ir_a64_emit.inc $(SLIMCC)/sched.inc | $(PICOLIBC_LIB)
 	@mkdir -p $(dir $@)
 	$(CC) $(filter-out -std=c23 -Wextra,$(CFLAGS)) -std=gnu17 -Wno-switch -DSLIMCC_LIBRARY -c -o $@ $<
 
@@ -262,7 +262,7 @@ $(KSLIM)/lwip/%.o: $(LWIP)/%.c $(KSLIM_CC) | $(PICOLIBC_LIB)
 	@mkdir -p $(dir $@)
 	$(KSLIM_CC) -std=c23 $(KSLIM_INC) $(LWIP_INC) $(KSLIM_DEP) -c -o $@ $<
 
-$(KSLIM)/slimcc/%.o: $(SLIMCC)/%.c $(SLIMCC)/ir.inc $(SLIMCC)/sched.inc $(KSLIM_CC) | $(PICOLIBC_LIB)
+$(KSLIM)/slimcc/%.o: $(SLIMCC)/%.c $(SLIMCC)/ir.inc $(SLIMCC)/ir_a64.inc $(SLIMCC)/ir_a64_emit.inc $(SLIMCC)/sched.inc $(KSLIM_CC) | $(PICOLIBC_LIB)
 	@mkdir -p $(dir $@)
 	$(KSLIM_CC) -std=gnu17 -DSLIMCC_LIBRARY $(KSLIM_INC) $(KSLIM_DEP) -c -o $@ $<
 

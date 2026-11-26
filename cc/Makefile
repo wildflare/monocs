@@ -18,8 +18,8 @@ slimcc: $(OBJS)
 $(OBJS): slimcc.h
 parse.o parse.lib.o parse.stage2.o parse.san.o: omp.inc
 
-# codegen.c は ir.inc（中間表現を使うコード生成）と sched.inc（命令の並べ替え）を取り込む
-codegen.o codegen.lib.o codegen.stage2.o codegen.san.o: ir.inc sched.inc
+# codegen.c は ir.inc（中間表現を使うコード生成。AArch64 の部分は ir_a64.inc・ir_a64_emit.inc）と sched.inc（命令の並べ替え）を取り込む
+codegen.o codegen.lib.o codegen.stage2.o codegen.san.o: ir.inc ir_a64.inc ir_a64_emit.inc sched.inc
 
 TESTS=$(TEST_SRCS:.c=.exe)
 
