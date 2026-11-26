@@ -3737,6 +3737,14 @@ static void ir_load_elim(void) {
       }
     }
     for (IrInst *in = bb->first; in; in = in->next) {
+      if (in->op == IR_LOAD || in->op == IR_STORE) {
+        // この回の中で置き換えた読み出し（repl）を、土台・添字・書く値にも反映してから比べる（2026-11-27。前は
+        // p = 大域変数を読む → p->n を読む の形で、p の 2 回目の読み出しを 1 回目に置き換えても、p->n の読み出しは
+        // 土台が違うものに見えて、同じ場所をもう一度読んでいた。zone_malloc の chunks->used）
+        in->a = ir_resolve(in->a);
+        in->b = ir_resolve(in->b);
+        in->c = ir_resolve(in->c);
+      }
       switch (in->op) {
       case IR_LOAD: {
         if (in->acq)
