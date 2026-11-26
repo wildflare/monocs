@@ -1571,6 +1571,22 @@ static void ir_emit_inst1(IrInst *in, IrBlock *bb, IrBlock *next_bb) {
   case IR_INDBR:
     E1("br", ir_base_srcA(in->a, aX(16)));
     return;
+  case IR_SWTAB: {
+    // 表引きの switch（2026-11-27）: 表は行き先のラベルと表の頭の差（4 バイト）。adr・ldrsw・add・br
+    char tb[STRBUF_SZ], lb[STRBUF_SZ];
+    snprintf(tb, STRBUF_SZ, ".L.swt.%" PRIi64, count());
+    AOp ix = ir_srcA(in->a, aX(17));
+    E2("adr", aX(16), aText(tb));
+    E2("ldrsw", aX(17), aMemIdx(aX(16), ix, 2));
+    E3("add", aX(16), aX(16), aX(17));
+    E1("br", aX(16));
+    Printfsn("%s:", tb);
+    for (int i = 0; i < in->nswtab; i++) {
+      ir_label(lb, ir_thread(bb->succ[in->swtab[i]]));
+      Printftn(".word %s - %s", lb, tb);
+    }
+    return;
+  }
   case IR_LABELADDR:
     Printftn("adr %s, .L.jmp.%" PRIi64, ao_name(ir_dstA(in)), in->imm);
     ir_finish_dstA(in);
@@ -1825,6 +1841,9 @@ static void ir_emit_fn2(Obj *fn) {
     } else if (t->op == IR_INDBR) {
       for (int k = 0; k < bb->nsucc; k++)
         ref[bb->succ[k]->id] = true;    // 番地で飛んでくる（間を飛ばさない）
+    } else if (t->op == IR_SWTAB) {
+      for (int k = 0; k < bb->nsucc; k++)
+        ref[ir_thread(bb->succ[k])->id] = true;   // 表から飛んでくる
     } else if (t->op == IR_CBR) {
       IrBlock *tb = ir_thread(bb->succ[0]), *fb = ir_thread(bb->succ[1]);
       if (tb == next) {
@@ -1844,7 +1863,7 @@ static void ir_emit_fn2(Obj *fn) {
     {
       IrInst *t = bb->last;
       IrBlock *next = ir_fallthrough(i);
-      if (t && (t->op == IR_RET || t->op == IR_INDBR))
+      if (t && (t->op == IR_RET || t->op == IR_INDBR || t->op == IR_SWTAB))
         falls = false;
       else if (t && t->op == IR_BR)
         falls = bb->succ[0] == next || ir_thread(bb->succ[0]) == next;

@@ -333,6 +333,7 @@ typedef enum {
   FX_ADR21,    // adr
   FX_ADRP,     // adrp sym
   FX_OTHER,    // そのままリロケーションにする（:lo12: など）
+  FX_DIFF32,   // .word A - B（同じセクションのラベルの差。最後に定数にする）
 } FixKind;
 
 typedef struct {
@@ -344,6 +345,7 @@ typedef struct {
   char *sym;
   int64_t addend;
   int line;
+  char *sub;        // FX_DIFF32 の引くシンボル
 } Fixup;
 
 TLS static Fixup *fixups;
@@ -381,6 +383,16 @@ static void resolve_fixups(void) {
     Fixup *f = &fixups[i];
     src_line = f->line;
     AsmSymbol *s = resolve_symbol(get_symbol(f->sym));
+    if (f->kind == FX_DIFF32) {
+      AsmSymbol *b = resolve_symbol(get_symbol(f->sub));
+      if (!s->defined || !b->defined || s->sect != b->sect)
+        asm_error("cannot subtract symbols in different sections");
+      int64_t d = s->value + f->addend - b->value;
+      if (d < INT32_MIN || d > UINT32_MAX)
+        asm_error("value out of range");
+      patch32(f->sec, f->ofs, (uint32_t)d);
+      continue;
+    }
     bool pcrel_branch = f->kind == FX_B26 || f->kind == FX_CALL26 || f->kind == FX_COND19 ||
                         f->kind == FX_TST14 || f->kind == FX_ADR21 || f->kind == FX_LD19;
 
@@ -474,11 +486,15 @@ static char *read_symbol(const char **rest, const char *p) {
   return tmp_strndup(p, q - p);
 }
 
-// 式の値: 定数、またはシンボル + 定数
+// 式の値: 定数、またはシンボル + 定数。sub があれば、さらに sub を引く（まだ定義していないラベルの差。
+// dir_data だけが受け付け、最後に同じセクションなら定数にする。switch の表引きの表。2026-11-27）
 typedef struct {
   char *sym;
   int64_t val;
+  char *sub;
 } Expr;
+
+TLS static bool expr_allow_sub;   // dir_data の間だけ、まだ定義していないラベルの差を受け付ける
 
 static Expr parse_expr(const char **rest, const char *p);
 
@@ -616,6 +632,11 @@ static Expr parse_expr(const char **rest, const char *p) {
         asm_error("cannot subtract a symbol from a constant");
       AsmSymbol *a = resolve_symbol(get_symbol(e.sym));
       AsmSymbol *b = resolve_symbol(get_symbol(r.sym));
+      if ((!a->defined || !b->defined) && expr_allow_sub && !e.sub && !r.sub) {
+        e.sub = r.sym;            // 最後に確かめる（FX_DIFF32）
+        e.val -= r.val;
+        continue;
+      }
       if (!a->defined || !b->defined || a->sect != b->sect)
         asm_error("cannot subtract symbols in different sections");
       e.val = a->value + e.val - b->value - r.val;
@@ -2816,7 +2837,18 @@ static void dir_data(int size, const char *args) {
     }
   }
   for (int i = 0; i < n; i++) {
+    expr_allow_sub = true;
     Expr e = parse_expr_all(ops[i]);
+    expr_allow_sub = false;
+    if (e.sub) {
+      if (size != 4)
+        asm_error("label difference of this size is not supported");
+      add_fixup(FX_DIFF32, 0, true, e.sym, e.val);
+      fixups[nfix - 1].sub = tmp_strdup(e.sub);
+      get_symbol(e.sub)->referenced = true;
+      emit_le(0, 4);
+      continue;
+    }
     if (e.sym) {
       FixKind k = size == 8 ? FX_ABS64 : size == 4 ? FX_ABS32 : size == 2 ? FX_ABS16 : FX_OTHER;
       if (k == FX_OTHER)

@@ -2,7 +2,8 @@
 # switch の振り分け（ir.inc の ir_switch・ir_switch_tree。case が多いときは二分探索）の試験を生成する。
 # いろいろな型・case の値（まばら・密集・負・型の端）・範囲（case a ... b）・default のある・ない・
 # 落ちる流れを持つ関数を作り、境界のまわりの値で呼んで結果を出す。GCC と slimcc の出力が同じことを
-# 確かめる（run.sh の 8d）。
+# 確かめる（run.sh の 8d）。2026-11-27 から、表引き（ir_switch_table）にかかる密なもの（型の端に接したもの、
+# case が 100・250 個のもの）も。
 #
 #   python3 switch_gen.py 出力ファイル [乱数の種] [関数の数]
 
@@ -32,11 +33,15 @@ def lit(ty, v):
 def gen_func(r, k):
     ty = r.choice(list(TYPES))
     lo, hi = TYPES[ty]
-    ncase = r.choice([1, 3, 4, 5, 6, 8, 12, 20, 33, 60])
-    style = r.choice(["dense", "sparse", "edge"])
+    ncase = r.choice([1, 3, 4, 5, 6, 8, 12, 20, 33, 60, 100, 250])
+    style = r.choice(["dense", "sparse", "edge", "dense", "dense_lo", "dense_hi"])
     vals = set()
     ranges = []
     base = r.randint(max(lo, -1000), min(hi, 1000) - 200) if hi - lo > 2000 else lo
+    if style == "dense_lo":
+        base, style = lo, "dense"                       # 型のいちばん小さい値から
+    elif style == "dense_hi":
+        base, style = max(lo, hi - ncase * 2), "dense"  # 型のいちばん大きい値まで
     while len(ranges) < ncase:
         if style == "dense":
             a = base + r.randint(0, ncase * 2)

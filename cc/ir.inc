@@ -88,6 +88,10 @@ typedef enum {
   // ラベルのブロックへ飛ぶだけ）。後続の多いブロックから合流のあるブロックへの辺ができないので、SSA を抜けるとき
   // の辺の分け方などは今までのまま（GCC も goto *p を 1 か所に集める）
   IR_INDBR,             // a の番地へ飛ぶ（br。後続は bb->succ のすべて）
+  // 表引きの switch（2026-11-27）: a（0〜nswtab - 1。範囲は前の比べで確かめてある）番目の行き先
+  // bb->succ[swtab[a]] へ飛ぶ。後続は行き先ごとの入口のブロック（前任が 1 つ。IR_INDBR と同じく、SSA を抜けるとき
+  // に辺を分けなくてよい）
+  IR_SWTAB,
   IR_LABELADDR,         // ラベルの番地（adr。imm は .L.jmp の番号）
   IR_SELECT,            // a が 0 でなければ b、0 なら c（整数。csel。分岐をなくす if 変換 ir_if_convert。2026-11-26）
 } IrOp;
@@ -150,6 +154,8 @@ struct IrInst {
   // 下位 32 ビットだけが使われる（ir_mark_low32）。low32 の nsw の演算は w レジスタの命令で計算し、
   // 符号拡張しない（上位 32 ビットは 0 になりうる。使う側は下位 32 ビットだけを読む）
   bool low32;
+  int *swtab;       // IR_SWTAB: 値 → 後続の番号
+  int nswtab;
   int *argregs;     // CALL の引数を置くレジスタの番号（x か v）。負ならスタック: -1 - そのオフセット（sp から）
   int stkargs;      // CALL: スタックで渡す引数の量（16 の倍数。呼ぶ直前に sp を下げ、戻ったら上げる）
   Type **argtys;    // CALL の引数の型（構造体はアドレスを値にして、レジスタに読み込んで渡す）
@@ -477,7 +483,7 @@ static IrInst *ir_new(IrOp op) {
 
 static bool ir_is_term(IrInst *in) {
   return in && (in->op == IR_BR || in->op == IR_CBR || in->op == IR_RET || in->op == IR_UNREACH ||
-                in->op == IR_INDBR);
+                in->op == IR_INDBR || in->op == IR_SWTAB);
 }
 
 static void ir_append(IrBlock *bb, IrInst *in) {
@@ -2223,6 +2229,59 @@ static void ir_switch_tree(IrInst *v, IrCase *cs, int n, IrBlock *def) {
   ir_jump(def);
 }
 
+// 表引き（2026-11-27）: case の範囲が IR_SWTAB_MIN 個以上で、下端から上端までの値の数が、case の値の数の
+// IR_SWTAB_DENSITY 倍まで（で IR_SWTAB_MAX まで）なら、(v - 下端) を符号なしで幅と比べて外れたら def へ、
+// 中なら表で飛ぶ。二分探索では、case が 50 個なら比べと分岐が 6 回ほど（GCC も密なら表引き）
+#define IR_SWTAB_MIN 6
+#define IR_SWTAB_DENSITY 3
+#define IR_SWTAB_MAX 4096
+
+static bool ir_switch_table(IrInst *v, IrCase *cs, int n, IrBlock *def) {
+  if (n < IR_SWTAB_MIN)
+    return false;
+  uint64_t lo = (uint64_t)cs[0].lo, range = (uint64_t)cs[n - 1].hi - lo;   // cs は下端の順
+  uint64_t nvals = 0;
+  for (int i = 0; i < n; i++)
+    nvals += (uint64_t)cs[i].hi - (uint64_t)cs[i].lo + 1;
+  if (range >= IR_SWTAB_MAX || range + 1 > IR_SWTAB_DENSITY * nvals)
+    return false;
+  IrInst *idx = lo ? ir_bin(IR_SUB, v, ir_const((int64_t)lo)) : v;
+  IrInst *c = ir_bin(IR_CMP, idx, ir_const((int64_t)range));
+  c->cond = CC_HI;
+  IrBlock *d = ir_new_block();
+  ir_branch(c, def, d);
+  ir_seal(d);
+  ir_cur = d;
+  IrInst *br = ir_new(IR_SWTAB);
+  br->a = idx;
+  br->nswtab = (int)range + 1;
+  br->swtab = ir_alloc(sizeof(int) * br->nswtab);
+  ir_append(d, br);
+  // 行き先ごとの入口のブロック（同じ行き先は 1 つ。最初の 1 つは def）
+  IrBlock **targets = ir_alloc(sizeof(IrBlock *) * (n + 1));
+  int nt = 0;
+  targets[nt++] = def;
+  for (int i = 0; i < br->nswtab; i++)
+    br->swtab[i] = 0;
+  for (int i = 0; i < n; i++) {
+    int k = 0;
+    while (k < nt && targets[k] != cs[i].target)
+      k++;
+    if (k == nt)
+      targets[nt++] = cs[i].target;
+    for (uint64_t x = (uint64_t)cs[i].lo - lo; x <= (uint64_t)cs[i].hi - lo; x++)
+      br->swtab[x] = k;
+  }
+  for (int k = 0; k < nt; k++) {
+    IrBlock *e = ir_new_block();
+    ir_add_succ(d, e);
+    e->sealed = true;
+    ir_cur = e;
+    ir_jump(targets[k]);
+  }
+  return true;
+}
+
 static void ir_switch(Node *node) {
   Type *ty = node->ctrl.cond->ty;
   if (!ir_scalar_ty(ty))
@@ -2245,7 +2304,8 @@ static void ir_switch(Node *node) {
     ir_case_unsigned = ty->is_unsigned || ty->kind == TY_PTR;
     qsort(cs, n, sizeof(IrCase), ir_case_cmp);
   }
-  ir_switch_tree(v, cs, n, def);
+  if (!ir_switch_table(v, cs, n, def))
+    ir_switch_tree(v, cs, n, def);
   ir_cur = ir_new_block(); // 本体の先頭（最初の case の前）には来ない
   ir_cur->sealed = true;
   ir_push_loop(node, brk, NULL);
@@ -3269,7 +3329,7 @@ static void ir_cse(void) {
 static bool ir_is_pure(IrInst *in) {
   switch (in->op) {
   case IR_STORE: case IR_CALL: case IR_RET: case IR_BR: case IR_CBR: case IR_UNREACH: case IR_COPY:
-  case IR_INDBR:
+  case IR_INDBR: case IR_SWTAB:
   case IR_FSQRT: // 負の数では sqrt を呼んで errno を設定する
     return in->sqrt_nonneg;
   case IR_MEMZERO:
@@ -4415,7 +4475,7 @@ static void ir_out_of_ssa(void) {
     for (int k = 0; k < bb->npreds; k++) {
       IrBlock *pred = bb->preds[k];
       // 重要な辺（前任が分岐する）は、間にブロックを入れる
-      if (pred->last->op == IR_INDBR)
+      if (pred->last->op == IR_INDBR || pred->last->op == IR_SWTAB)
         ir_unsupported();   // 番地で飛ぶので間に入れられない（入口のブロックは前任が 1 つなので来ないはず）
       if (pred->nsucc > 1) {
         IrBlock *mid = ir_new_block();
@@ -4492,6 +4552,7 @@ static bool ir_defines(IrInst *in) {
   case IR_BR:
   case IR_CBR:
   case IR_INDBR:
+  case IR_SWTAB:
   case IR_RET:
   case IR_UNREACH:
   case IR_PHI:

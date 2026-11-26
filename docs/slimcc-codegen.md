@@ -20,7 +20,7 @@ GCC 版より遅い分は、slimcc の出すコードを良くして縮める。
 
 - 2 世代目の slimcc の .text（verify.sh の最後）: 575,380 → 514,932 バイト。
 - Pi 5 の bench.sh: nbody 402ms（GCC -O2 301ms）、primes 1,025ms（1,007ms）、strhash 399ms（402ms。GCC に並んだ）。
-- 2026-11-27 に入れたもの（下の 9〜14）: 引数の定数を x0〜x7 に直接、tbz・tbnz、ccmp・cset、呼び出しのある関数でも
+- 2026-11-27 に入れたもの（下の 9〜15）: 引数の定数を x0〜x7 に直接、tbz・tbnz、ccmp・cset、呼び出しのある関数でも
   x0〜x7 を値に（いちばん効いた。3〜4%）、退避の stp・ldp、memcpy のある関数でも x0〜x5、定数の計算の直し。
   どれも main にコミット済み（GitHub には未 push）。実機は 8b4c519 のカーネルで動いている。
 
@@ -50,19 +50,9 @@ join <(awk '$3=="kernel"{print $4, $2}' slim.txt | sort) <(awk '$3=="kernel"{pri
 
 ### 次の候補（効きそうな順）
 
-1. **switch の表引き**（次にやる。ユーザーに提案済み、まだ始めていない）: ir_emit_inst1 は `in->op` の大きな switch で、
-   GCC の約 2 倍の命令。slimcc は switch をいつも二分探索（ir_switch_tree。比べと分岐を 6 回ほど）、GCC は密なら表引き。
-   コンパイラの熱い所はほとんど op・字句の種類の switch なので、広く効く見込み。
-   - 形の案: case の範囲が密（例: 値の幅が case の数の 2〜3 倍以内、case が 8 個以上）なら、`v - lo` を符号なしで幅と比べて
-     default へ、表から行き先を読んで飛ぶ。
-   - 中間表現: 多方向の分岐は計算型の goto の IR_INDBR がある（後続を bb->succ に全部持つ。IR_LABELADDR・jmp_id の
-     .L.jmp.N）。表の作り方は 2 通り: (a) .rodata に `.word .L.case - .L.base` の相対の表（GCC と同じ。内蔵アセンブラが
-     ラベルの差を数にできるか確かめる。かけらの道でも要る）、(b) 関数の中に `b .L.case` を並べた表へ `adr` + 番号 × 4 で飛ぶ
-     （表も分岐も 1 命令ずつ増えるが、データもリロケーションも要らず簡単）。まず (b) で効き目を測るのがよさそう。
-   - 気をつけること: 二分探索の葉の if 変換・ccmp との関係、IR_INDBR の後続が多いブロックの SSA を抜けるときの辺の分け方、
-     命令の並べ替え（sched.inc は br を区切りにする）、tbz の 32KB の書き直し（ir_relax_tbz）のように、表の分岐の届く範囲。
-   - 試験: make cc-test の 8d（cc/test-a64/switch_gen.py。型・端の値・範囲・default の有無・落ちる流れの switch 300 個 × 種 4 つを
-     GCC と比べる）を、密な switch が多く出るように広げる。
+1. （済み、2026-11-27。下の 15）**switch の表引き**。効き目は 0.4% と小さかった。続きは、値が散らばった
+   「いくつかの値なら」の switch（`ir_defines` などの `case IR_STORE: case IR_BR: … return false;`）をビットの表
+   1 つと比べ 1 回にする形（GCC の bit test。今は密でないので二分探索のまま）。
 2. 呼び出しをまたぐ値の退避（12 の「まだ」）、構造体を渡す呼び出しのある関数でも x0〜x7。
 3. 小さなもの: csinc（`c ? x + 1 : x`）、範囲の確かめ（`x >= A && x < B` を sub と符号なしの比べ 1 つに）、
    論理即値（`and x, x, #0xff` を定数を作らずに）、`x & mask`（2^k でない）の `tst`、合流の写しの定数（`movz` + `mov`、
@@ -486,3 +476,23 @@ sh tools/slimcc/devbench.sh build/kernel8.img build/kslim/kernel8.img   # 両方
   確かめ: cmp_o.sh、make cc-test、verify.sh（quick なし。すべて一致）。
 - 次（この比べで差の大きかったもの）: ir_linear_scan（1,012 対 785）、ir_emit_inst1（431 対 223）、ir_mem2reg（711 対 505）、
   ir_alloc_nz・zone_malloc（確保）、ir_mark_low32、new_token。
+
+## 15. switch の表引き（2026-11-27）
+
+- cc/ir.inc の ir_switch_table（ir_switch から。二分探索 ir_switch_tree の前に試す）: case の範囲が IR_SWTAB_MIN（6）個以上で、
+  下端から上端までの値の数が case の値の数の IR_SWTAB_DENSITY（3）倍まで・IR_SWTAB_MAX（4096）までなら、
+  `idx = v - 下端` を符号なしで幅と比べて（CC_HI で default へ）、中なら IR_SWTAB で飛ぶ。
+- IR_SWTAB（新しい終わりの命令）: a が表の番号、swtab[a] が後続の番号。後続は行き先ごとの入口のブロック（前任が 1 つ、
+  最初の 1 つは default）。計算型の goto（IR_INDBR）と同じ形なので、SSA を抜けるときに辺を分けなくてよい。
+- 出力（cc/ir_a64_emit.inc）: `adr x16, .L.swt.N`・`ldrsw x17, [x16, idx, lsl #2]`・`add x16, x16, x17`・`br x16`、続けて
+  `.L.swt.N:` と行き先ごとの `.word .L.ir.F.B - .L.swt.N`（GCC と同じ相対の表。入口のブロックは ir_thread で飛ばした先）。
+- 内蔵アセンブラ（cc/assembler.c）: `.word A - B` で A・B がまだ定義されていないラベルでもよいようにした（Expr の sub、
+  FX_DIFF32。最後に同じセクションなら差を書く。dir_data の間だけ）。GNU as と同じバイト列。
+- 効果: 2 世代目の .text 514,932 → 514,388 バイト。コンパイラの中で表引きになった switch 42 個（codegen.c 30・parse.c 6・
+  assembler.c 5・tokenize.c 1。ir_emit_inst1・ir_simplify・ir_fold・ao_print など）。実機のカーネルの中のコンパイラ
+  parse.c 523 → 523M、codegen.c 1,247 → 1,242M（0.4%。前後のカーネルを交互に 2 回ずつ。この日に実機の材料を
+  送り直したので、codegen.c の数はそれまでの表より大きい）。小さかったのは、値が散らばった switch が表引きに
+  ならないことと、Cortex-A53 が行き先の変わる br をあまり読み当てられないためと思われる（確かめていない）。
+- 試験: cc/test-a64/switch_gen.py（make cc-test の 8d）に、型の端に接した密な switch（dense_lo・dense_hi）と
+  case が 100・250 個のものを足した（種 8 つで表引き 61〜82 個、GCC と同じ。QEMU の cortex-a53 でも）。
+  確かめ: cmp_o.sh（かけらの道と文字列の道の .o が同じ）、make cc-test、verify.sh（quick なし。すべて一致）。
