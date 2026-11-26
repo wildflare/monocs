@@ -511,3 +511,17 @@ sh tools/slimcc/devbench.sh build/kernel8.img build/kslim/kernel8.img   # 両方
 - 試験: cc/test-a64/switch_gen.py に、いくつかの case が同じ本体を共有する形（shared）を足した（種 8 つでビットの表
   77〜107 個・表引き 60〜68 個、GCC と同じ。QEMU の cortex-a53 でも）。確かめ: cmp_o.sh、make cc-test、verify.sh
   （quick なし。すべて一致）。
+
+## 17. 書き込みの前の拡張を省く（2026-11-27）と、残りの差
+
+- cc/ir.inc の ir_simplify の IR_STORE: size バイトの書き込みの値が size バイト以上への拡張（IR_EXT）なら、拡張の前の値を
+  書く（`uxtb w12, w13` → `strb w12` の uxtb がなくなる）。コンパイラの中の拡張 194 → 158 個、2 世代目の .text
+  515,284 → 515,220 バイト。実機の速さは変わらない。確かめ: cmp_o.sh、make cc-test、verify.sh（すべて一致）。
+- 14 の比べのやり直し（2026-11-27 の終わり。GCC 版 26,452・slimcc 版 36,211 の記録）で差の大きいもの:
+  get_entry_h（835 対 270）、ir_linear_scan（1,022 対 780）、ir_mem2reg（858 対 623）、ir_emit_inst1（430 対 217）、
+  ir_alloc_nz（592 対 394）、zone_malloc（418 対 227）、new_token（486 対 318）、ir_mark_low32（516 対 353）。
+  - get_entry_h は、Pi 5 の perf annotate で時間の 6 割がバケツを読んだ直後（キャッシュに当たらない）。ループの形は
+    GCC とほぼ同じで、差は GCC が get_entry_h・fnv_hash を呼び出し元にインライン展開していること（slimcc は
+    ループのある関数を IR_INLINE_SIZE 12 では展開しない）。記録の数の 3 倍の差は、まだ説明できていない。
+  - emit_le（129 対 34）は、ループの番地とずらす量を毎回 i から計算している（GCC は `+= 8` と、書いた後に番地を
+    進める `strb w4, [x3], #1`）。これが「誘導変数の強度の削減」と「後置の番地の形」（4. の候補）。

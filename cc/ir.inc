@@ -3077,6 +3077,13 @@ static const int ir_swap_cond[] = {CC_EQ, CC_NE, CC_GT, CC_GE, CC_LT, CC_LE, CC_
 static IrInst *ir_simplify(IrInst *in) {
   IrInst *a = in->a, *b = in->b;
   switch (in->op) {
+  case IR_STORE:
+    // size バイトの書き込みは下位 size バイトしか書かないので、値が size バイト以上への拡張なら、拡張の前の値を
+    // 書く（strb の前の uxtb など。2026-11-27）
+    while (b && !b->fp && in->size < 8 && b->op == IR_EXT && b->size >= in->size && !b->a->fp) {
+      in->b = b = b->a;
+    }
+    return NULL;
   case IR_EXT:
     if (a->op == IR_CONST)
       return ir_const_before(in, ir_ext_val(a->imm, in->size, in->sign));
