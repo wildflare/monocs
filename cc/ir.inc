@@ -3014,6 +3014,21 @@ static IrInst *ir_simplify(IrInst *in) {
       return NULL;
     }
     int64_t c = b->imm;
+    // (x ± c1) ± c2 → x + (±c1 ± c2)（後置の増減 x++ は (x += 1) - 1 の形で来る。2026-11-27）。同じ形
+    // （w の命令か・符号つきのあふれなしか）のときだけ
+    if ((in->op == IR_ADD || in->op == IR_SUB) && (a->op == IR_ADD || a->op == IR_SUB) && a->b &&
+        a->b->op == IR_CONST && !a->fp && a->wform == in->wform && a->nsw == in->nsw) {
+      uint64_t t = (in->op == IR_ADD ? (uint64_t)c : 0 - (uint64_t)c) +
+                   (a->op == IR_ADD ? (uint64_t)a->b->imm : 0 - (uint64_t)a->b->imm);
+      if (in->wform)
+        t = (uint32_t)t;
+      if (t == 0)
+        return a->a;
+      in->op = IR_ADD;
+      in->a = a->a;
+      in->b = ir_const_before(in, (int64_t)t);
+      return NULL;
+    }
     switch (in->op) {
     case IR_ADD:
     case IR_SUB:
@@ -3328,6 +3343,10 @@ static bool ir_use_low32(IrInst *in, IrInst *v) {
   case IR_EXT:
     return in->size <= 4;
   case IR_ADD: case IR_SUB: case IR_MUL: case IR_SDIV: case IR_SREM:
+    // 4 バイトの読み出し・戻り値（広げないで済ませるための印）は、符号つきの計算の結果も下位 32 ビットだけ
+    // 使われるときだけ（でなければ結果を sxtw で広げ直すので、前の ldrsw より 1 命令増える。2026-11-27）
+    if ((v->op == IR_LOAD || v->op == IR_CALL) && in->nsw && !in->wform)
+      return in->low32;
     return in->nsw || in->wform; // w レジスタの命令にする
   case IR_SHL:
     return in->wform;
@@ -3356,7 +3375,10 @@ static void ir_mark_low32(void) {
     if (bb->reachable)
       for (IrInst *in = bb->first; in; in = in->next)
         in->low32 = ir_is_nsw32(in) || ((in->op == IR_PHI || in->op == IR_SELECT) && !in->fp) ||
-                    (in->op == IR_EXT && in->size == 4);
+                    (in->op == IR_EXT && in->size == 4) ||
+                    // 4 バイトの読み出し・戻り値（下位 32 ビットだけを使うなら符号拡張しない。2026-11-27）
+                    (in->op == IR_LOAD && in->size == 4 && !in->fp) ||
+                    (in->op == IR_CALL && in->size == 4 && !in->fp && !in->ty);
   }
   for (bool changed = true; changed;) {
     changed = false;
@@ -4491,6 +4513,30 @@ static bool ir_defines(IrInst *in) {
   }
 }
 
+// 定数の掛け算 c が (2^k + 1) × 2^m なら 1、(2^k - 1) × 2^m なら -1（k ≥ 1、2^k - 1 は 3 以上）、ほかは 0。
+// 2 のべき乗は IR_SHL に簡約される
+static int ir_mul_shape(int64_t c, int *k, int *m, bool *dummy) {
+  (void)dummy;
+  if (c <= 2)
+    return 0;
+  int mm = 0;
+  uint64_t u = (uint64_t)c;
+  while (!(u & 1))
+    u >>= 1, mm++;
+  if (u < 3)
+    return 0;
+  for (int kk = 1; kk < 32; kk++) {
+    if (u == (1ULL << kk) + 1 || (u == (1ULL << kk) - 1 && kk >= 2)) {
+      if (k)
+        *k = kk;
+      if (m)
+        *m = mm;
+      return u == (1ULL << kk) + 1 ? 1 : -1;
+    }
+  }
+  return 0;
+}
+
 // 即値として命令に埋め込める定数（その命令の第 2 オペランド）
 static bool ir_imm_operand(IrInst *user, IrInst *v) {
   if (user->op == IR_FCMP && user->b == v && v->op == IR_FCONST && v->imm == 0)
@@ -4501,7 +4547,10 @@ static bool ir_imm_operand(IrInst *user, IrInst *v) {
   case IR_ADD:
   case IR_SUB:
   case IR_CMP:
-    return v->imm >= 0 && v->imm < 4096;
+    // 負なら逆の命令（sub・add・cmn）の即値（2026-11-27）
+    return v->imm > -4096 && v->imm < 4096;
+  case IR_MUL:
+    return ir_mul_shape(v->imm, NULL, NULL, NULL) != 0;   // ずらす命令と足し算・引き算（2026-11-27）
   case IR_SHL:
   case IR_SHR:
   case IR_SAR:
@@ -6184,7 +6233,20 @@ static void ir_emit_inst1(IrInst *in, IrBlock *bb, IrBlock *next_bb) {
       a = aWof(a);
       d = aWof(d);
     }
-    if (imm_b) {
+    if (imm_b && in->op == IR_MUL) {
+      int k, m;
+      if (ir_mul_shape(in->b->imm, &k, &m, NULL) > 0) {
+        E4("add", d, a, a, aShift("lsl", k));             // a × (2^k + 1)
+      } else {
+        AOp t = w ? aR('w', 17) : aX(17);
+        E3("lsl", t, a, aI(k));
+        E3("sub", d, t, a);                               // a × (2^k - 1)
+      }
+      if (m)
+        E3("lsl", d, d, aI(m));
+    } else if (imm_b && in->b->imm < 0 && (in->op == IR_ADD || in->op == IR_SUB)) {
+      E3(in->op == IR_ADD ? "sub" : "add", d, a, aI(-in->b->imm));
+    } else if (imm_b) {
       E3(names[in->op], d, a, aI(in->b->imm));
     } else {
       AOp b = ir_srcA(in->b, aX(17));
@@ -6258,7 +6320,7 @@ static void ir_emit_inst1(IrInst *in, IrBlock *bb, IrBlock *next_bb) {
       };
       if (in->cond > CC_HS || in->ccond > CC_HS)
         internal_error();
-      AOp b = imm_b && in->b->imm < 32 ? aI(in->b->imm) : ir_srcA(in->b, aX(17));
+      AOp b = imm_b && in->b->imm >= 0 && in->b->imm < 32 ? aI(in->b->imm) : ir_srcA(in->b, aX(17));
       if (w) {
         a = aWof(a);
         if (b.kind == AO_REG)
@@ -6266,7 +6328,10 @@ static void ir_emit_inst1(IrInst *in, IrBlock *bb, IrBlock *next_bb) {
       }
       E4("ccmp", a, b, aI(nzcv_false[in->cond]), aCond(in->ccond));
     } else if (imm_b) {
-      E2("cmp", w ? aWof(a) : a, aI(in->b->imm));
+      if (in->b->imm < 0)
+        E2("cmn", w ? aWof(a) : a, aI(-in->b->imm));
+      else
+        E2("cmp", w ? aWof(a) : a, aI(in->b->imm));
     } else {
       AOp b = ir_srcA(in->b, aX(17));
       E2("cmp", w ? aWof(a) : a, w ? aWof(b) : b);
@@ -6377,7 +6442,7 @@ static void ir_emit_inst1(IrInst *in, IrBlock *bb, IrBlock *next_bb) {
     switch (in->size) {
     case 1: in->sign ? E2("ldrsb", d, mem) : E2("ldrb", aWof(d), mem); break;
     case 2: in->sign ? E2("ldrsh", d, mem) : E2("ldrh", aWof(d), mem); break;
-    case 4: in->sign ? E2("ldrsw", d, mem) : E2("ldr", aWof(d), mem); break;
+    case 4: in->sign && !in->low32 ? E2("ldrsw", d, mem) : E2("ldr", aWof(d), mem); break;
     default: E2("ldr", d, mem); break;
     }
     ir_finish_dstA(in);
@@ -6488,7 +6553,7 @@ static void ir_emit_inst1(IrInst *in, IrBlock *bb, IrBlock *next_bb) {
       return;
     }
     // AAPCS64 では 8 バイトより小さい戻り値の上位ビットは不定
-    if (in->size < 8)
+    if (in->size < 8 && !(in->size == 4 && in->low32))
       ir_emit_extA(ir_dstA(in), aX(0), in->size, in->sign);
     else if (!ao_same(ir_dstA(in), aX(0)))
       E2("mov", ir_dstA(in), aX(0));

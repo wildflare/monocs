@@ -177,6 +177,10 @@ sh tools/slimcc/devbench.sh build/kernel8.img build/kslim/kernel8.img   # 両方
   入る）。QuickJS（Pi 5）fib 99 → 97ms、ループ 141 → 136ms と 2〜4% 速いが、QuickJS のコンパイルが 1.31 → 1.55 秒
   （17% 遅い）、qjs が 5% 大きい。Monocs はコンパイルの速さも大事なので戻した。
 
+- （2026-11-27）ループの反転を、メモリを読む条件（`i < in->nargs` の `p->n`・`*p`。volatile・アトミックは除く）にも
+  広げる（ir_dup_ok）。ir_count_uses の内側のループは分岐 1 つになり、`in->args` の読み出しもループの外に出たが、
+  条件を 2 か所に出す分で命令の数が 0.8% 増え、実機のカーネルの中のコンパイラが parse.c 526 → 534M、codegen.c
+  1,153 → 1,177M と遅くなった（展開には使わない形でも命令の数は同じだった）。戻した。
 - インライン展開の大きさ（IR_INLINE_SIZE 12）を 20〜40 に: カーネルの中のコードは約 3% 速いが、アプリと
   自分のコンパイルの仕事が増え、全体では遅くなった（2026-11-15）。カーネルを作るときだけ変えるには、
   セルフホストのビルドにも渡す仕組みが要る。
@@ -332,3 +336,25 @@ sh tools/slimcc/devbench.sh build/kernel8.img build/kslim/kernel8.img   # 両方
   541,524 → 518,132 バイト、実機のカーネルの中のコンパイラ parse.c 534 → 526M、codegen.c 1,165 → 1,152M
   （前後のカーネルを交互に 2 回ずつ）。
 - 確かめ: cmp_o.sh、make cc-test、verify.sh（quick なし。すべて一致）。
+
+## 14. 同じ仕事の関数ごとの命令の数を GCC 版と比べる（2026-11-27）
+
+- 実機で、GCC 版と slimcc 版のカーネルで同じ `cc -c -o /dev/null codegen.c` を `perf record -e inst -p 20000 -n 400`
+  にかけ、関数ごとの記録の数を比べた（GCC 版 24,771、slimcc 版 35,099）。差のいちばんは名前の表を引く get_entry_h
+  （873 対 247）。これがいちばん確かな探し方（命令の種類の比べは、GCC のインライン展開の差が混ざる）。
+- get_entry_h で見つけて直したもの（cc/ir.inc）:
+  - `(x ± c1) ± c2` → `x + (±c1 ± c2)`（0 なら x）。後置の増減 `hash++` は `(x += 1) - 1` の形で来るので、
+    `add`・`movn`・`add` で元の値を作り直していた（同じ w の形・あふれの扱いのときだけ）。
+  - 足し算・引き算・比べの負の即値（-4095〜-1）は、逆の命令（sub・add・cmn）の即値に（前は movn で作っていた）。
+  - 定数の掛け算 (2^k ± 1) × 2^m（3・5・7・9・12・24・40 など）を `add x, a, a, lsl #k`（か `lsl`・`sub`）と `lsl #m` に
+    （ir_mul_shape。前は movz と mul。構造体の配列の添字に多い）。
+  - 4 バイトの読み出しと int の戻り値は、下位 32 ビットだけを使うなら符号拡張しない（ldrsw → ldr w、sxtw を
+    出さない）。符号つきの計算に使うときは、その結果も下位 32 ビットだけのときだけ（でなければ広げ直しが要る）。
+- 効果: get_entry_h のループの中 11 → 9 命令。2 世代目の .text 518,132 → 514,932 バイト。実機のカーネルの中の
+  コンパイラ parse.c 525 → 523M、codegen.c 1,152 → 1,147M。Pi 5 の bench.sh で strhash 407 → 399ms（GCC -O2 402ms）、
+  primes 1,051 → 1,025ms。
+- 試験: cc/test-a64/gccmatch/arith_imm.c（いろいろな型の定数の掛け算・後置の増減・負の即値・int の戻り値と読み出しを
+  64 ビットで使う形。GCC の -O0・-O2・-fwrapv で同じ出力、UBSan で未定義動作なし）。
+  確かめ: cmp_o.sh、make cc-test、verify.sh（quick なし。すべて一致）。
+- 次（この比べで差の大きかったもの）: ir_linear_scan（1,012 対 785）、ir_emit_inst1（431 対 223）、ir_mem2reg（711 対 505）、
+  ir_alloc_nz・zone_malloc（確保）、ir_mark_low32、new_token。
