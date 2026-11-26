@@ -1011,7 +1011,7 @@ static const struct {
     { "set",    cmd_set,    "set -- ARG...   位置の引数を変える（set だけなら変数の一覧）" },
     { "dmesg",  cmd_dmesg,  "dmesg [-c|-C]   カーネルの記録（起動の表示、例外、Wi-Fi・USB・サービスのできごと）。-c は表示して消す、-C は消す" },
     { "make",   cmd_make,   "make [-C DIR] [目標] [変数=値] Makefile の選び方（make posix など）を覚えてコンパイルする（.monocs-make。make clean で忘れる）" },
-    { "cc",     slimcc_cmd, "cc [-o PROG] FILE.c...  実行ファイルを作る（-c なら .o。-I -D -std= -lNAME）" },
+    { "cc",     slimcc_cmd, "cc [-o PROG] FILE.c...  実行ファイルを作る（-c なら .o。-I -D -std= -lNAME。--report: 作らずに、使う OS の機能の一覧）" },
     { "ld",     slimld_cmd, "ld -o kernel8.img FILE.o... LIB.a...  リンカ（slimld）。今は Monocs のカーネルを作る専用" },
     { "baud",   cmd_baud,   "baud [BPS]      UART のボーレート（10 秒以内に y で確定。上限 3000000）" },
     { "recv",   cmd_recv,   "recv PATH SIZE CRC32 [BLOCK]  ファイルを受け取る（tools/uart/nos.py から使う）" },

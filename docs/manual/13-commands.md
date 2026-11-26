@@ -31,6 +31,7 @@
 | `run FILE[.c]\|DIR\|- [引数]` | その場でコンパイルして動かす |
 | `make [-C DIR] [目標] [変数=値]` | Makefile から作り方を選んでコンパイルする（`make clean` で忘れる） |
 | `cc [-o PROG] FILE.c…`・`cc -c FILE.c -o FILE.o` | 実行ファイル・.o を作る |
+| `cc --report [-l名前] FILE.c…` | 作らずに、そのプログラムが使う OS の機能（ファイルを消す、ネットワーク、ほかのプログラム、SD カード・再起動などの機械の設定、ほかのコア、ハードウェアのライブラリ）と、インラインアセンブリ・周辺機器の番地の直書きを出す。人が作ったコードを動かす前に。ポインタで OS のメモリを直接いじるような手は出ないので、悪意は防げない |
 | `ld -o kernel8.img FILE.o… LIB.a…` | リンカ（Monocs のカーネルを作る専用） |
 | `cache [clear [NAME\|PATH]…]` | コンパイルのキャッシュ |
 | `svc [list\|start FILE\|stop NAME]` | サービス |

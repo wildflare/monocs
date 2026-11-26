@@ -37,6 +37,7 @@ void __clear_cache(void *begin, void *end);     // 命令キャッシュとデ�
 #include "../libc/pipe_os.h"
 #include "../libc/socket_os.h"
 #include "../curses/curses_os.h"
+#include "report.h"
 #include "../kernel/fault.h"
 #include "../kernel/ksym.h"
 #include "../kernel/klog_file.h"
@@ -51,6 +52,7 @@ void __clear_cache(void *begin, void *end);     // 命令キャッシュとデ�
 static void *resolve(const char *name, void *ctx)
 {
     (void)ctx;
+    report_note(name);      // cc --report（os/slimcc/report.c。覚えている間だけ）
     bool tls = !strncmp(name, "tls:", 4);
     if (tls)
         name += 4;

@@ -13,6 +13,7 @@
 #include "ld.h"
 #include "libslimcc.h"
 #include "run.h"
+#include "report.h"
 
 #define MAX_ARGS 64
 
@@ -39,13 +40,16 @@ static int cc_executable(int argc, char **argv)
     char **joined = calloc((size_t)argc, sizeof *joined);
     const char *out = "a.out";
     int nfiles = 0, nflags = 0, njoined = 0, r = 1;
+    bool report = false;    // cc --report（os/slimcc/report.c）: 作らずに、使う OS の関数の一覧を出す
     if (!files || !flags || !joined) {
         fprintf(stderr, "%s: out of memory\n", argv[0]);
         goto done;
     }
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
-        if (!strcmp(a, "-o") && i + 1 < argc) {
+        if (!strcmp(a, "--report")) {
+            report = true;
+        } else if (!strcmp(a, "-o") && i + 1 < argc) {
             out = argv[++i];
         } else if ((!strcmp(a, "-I") || !strcmp(a, "-D") || !strcmp(a, "-U") || !strcmp(a, "-l")) && i + 1 < argc) {
             // -I DIR のように分けて書いたもの（run は -IDIR の形だけ読む）
@@ -70,6 +74,18 @@ static int cc_executable(int argc, char **argv)
     flags[nflags] = nullptr;
     if (!nfiles) {
         fprintf(stderr, "%s: no input files\n", argv[0]);
+        goto done;
+    }
+    if (report) {
+        // 作るのと同じ道でコンパイルしてつなぎ（つなぐときに使う関数がわかる）、できた実行ファイルは捨てる
+        static const char tmp[] = "/tmp/.cc-report";
+        report_begin();
+        r = slimcc_make_executable_files(files, nfiles, flags, tmp) ? 0 : 1;
+        remove(tmp);
+        if (r == 0)
+            report_print(files, nfiles, flags);
+        else
+            report_print(files, 0, nullptr);    // 失敗したとき: 覚えたものを捨てるだけ（files は出さない）
         goto done;
     }
     r = slimcc_make_executable_files(files, nfiles, flags, out) ? 0 : 1;
