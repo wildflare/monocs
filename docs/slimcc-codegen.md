@@ -599,3 +599,15 @@ sh tools/slimcc/devbench.sh build/kernel8.img build/kslim/kernel8.img   # 両方
 - 残り: ir_fingerprint（2%。最適化の回ごとに中間表現が変わったかを、全部の命令のすべての欄を混ぜて見る。混ぜ方を
   弱くすると、変わったのに同じと見誤って出すコードが変わるおそれ）、ir_intervals・ir_linear_scan（熱いところが散らばる）、
   ir_count_uses（1 回にまとめる形は遅かった）。
+
+## 22. 結果の変わらない段を省く（2026-11-27）
+
+- ir_optimize の ir_licm の後の ir_dce: ir_licm は命令を外して前に入れ直すだけで、作りも消しもせず、使われる数も変えない。
+  直前の ir_dce（ir_load_elim の後）で片付けてあるので、消すものがなく、省いても同じ。
+- ir_optimize の各回の ir_dominators: 回の中でブロックの形を変えるのは ir_fold_branches だけ（簡約・CSE・ir_dce は変えない）。
+  2 回目からは、ir_fold_branches が何か変えたときだけ作り直す（ir_fold_branches が bool を返す）。
+- 効果: Pi 5 で codegen.c のコンパイルの命令の数 slimcc で作った slimcc 691.8 → 687.4M、GCC で作った slimcc 472.9 → 469.6M、
+  自分のコンパイル 660 → 650ms。実機のカーネルの中のコンパイラ parse.c 511 → 508M、codegen.c 1,186 → 1,173M（1.1%）。
+  出すコードは変わらない（cmp_s.sh）。確かめ: make cc-test、verify.sh（quick なし。すべて一致）。
+- 考え方: 「その段の結果が、前の段の結果から変わりえない」ことを、段の中身を読んで確かめてから省く（変わりうるのに
+  省くと、出すコードが変わる。cmp_s.sh で確かめる）。

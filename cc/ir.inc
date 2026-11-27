@@ -3610,7 +3610,7 @@ static void ir_remove_edge(IrBlock *pred, IrBlock *bb) {
 }
 
 // 条件が定数の分岐を、まっすぐな分岐にする。通らなくなったブロックを除く（インライン展開の後に多い）
-static void ir_fold_branches(void) {
+static bool ir_fold_branches(void) {
   bool changed = false;
   for (int b = 0; b < ir_nblocks; b++) {
     IrBlock *bb = ir_blocks[b];
@@ -3628,7 +3628,7 @@ static void ir_fold_branches(void) {
     changed = true;
   }
   if (!changed)
-    return;
+    return false;
   // 到達できなくなったブロックを除く
   for (int b = 0; b < ir_nblocks; b++)
     ir_blocks[b]->reachable = false;
@@ -3641,6 +3641,7 @@ static void ir_fold_branches(void) {
       if (bb->succ[i]->reachable)
         ir_remove_edge(bb, bb->succ[i]);
   }
+  return true;
 }
 
 // 読み書き x と y が重なりうるか（LOAD・STORE）。わからなければ true
@@ -4317,8 +4318,10 @@ static void ir_optimize(void) {
   for (int round = 0; round < 3; round++) {
     ir_simplify_all();
     ir_mark_sqrt();
-    ir_fold_branches();
-    ir_dominators();
+    // 支配木を変えるのは、この回の中ではブロックの形を変える ir_fold_branches だけ（2 回目からは、変えたときだけ
+    // 作り直す。2026-11-27）
+    if (ir_fold_branches() || round == 0)
+      ir_dominators();
     ir_cse();
     ir_dce();
     uint64_t fp = ir_fingerprint();
@@ -4334,8 +4337,7 @@ static void ir_optimize(void) {
   ir_fold_addresses();
   ir_load_elim();
   ir_dce();
-  ir_licm();
-  ir_dce();
+  ir_licm();   // 命令を動かすだけで、作りも消しもせず、使われる数も変えない（ので、この後の ir_dce は要らない。2026-11-27）
   if (ir_ccmp_chain()) {    // a && b の比べを ccmp で続ける（2026-11-27）
     ir_dominators();
     ir_dce();
