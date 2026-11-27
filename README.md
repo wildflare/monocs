@@ -15,14 +15,14 @@ Hello, Monocs!
 
 ## 特徴
 
-- **ソースのまま動かす**: OS の中にコンパイラ（自作の slimcc-a64、C23）とリンカが入っていて、C のソースをメモリの上でコンパイルして動かします。付いてくるコマンドもサービスも C のソースのままです。
+- **ソースのまま動かす**: OS の中にコンパイラ（slimcc-a64、C23）とリンカが入っていて、C のソースをメモリの上でコンパイルして動かします。付いてくるコマンドもサービスも C のソースのままです。
 - **セルフホスト**: Monocs の上で、自分の C ライブラリとカーネルを作り直せます（Linux 上のビルドと 1 バイトも違わない）。
 - **速さが命**: カーネルが動き出してから、シェルまで約 1.5 秒（Wi-Fi で ssh できるまで約 6 秒）。小さなプログラムは 0.1 秒前後でコンパイルできます。
 - **シンプルな作り**: 同時に動くアプリは 1 つ、アドレス空間と特権も 1 つ（名前は Mono + Computing System から）。ふつうのアプリにシステムコールはなく、OS の関数を直接呼びます。4 つのコアのうち 1 つは裏で動くサービス用で、アプリはほかのコアを独り占めできます。
 - **Linux に合わせた使い勝手**: bash に近いシェル、Linux と同じ C ライブラリ・端末・ソケット・pthread・OpenMP。Lua・SQLite・vim・QuickJS をソースのまま動かしています。
 - **つないで使う**: USB（シリアル・イーサネット）、内蔵 Wi-Fi（WPA2）、SSH（sftp・scp・sshfs）、telnet、HTTP・HTTPS（curl）。
 - **電子工作**: GPIO・I2C・SPI・ソフトウェアの UART・PWM のコマンドとライブラリ。
-- **サンドボックスと C の Web**: 人が作った C のコードを、EL0（OS のメモリ・ハードウェア・ファイル・ネットワークに手を出せない）で動かせます（`sandbox FILE.c`）。中身が C のプログラムの小さな Web（`cweb URL`）も。ページは HTTP で取ってきて SHA-256 で確かめ、リンクでつなぎます（[docs/cweb.md](docs/cweb.md)）。
+- **サンドボックスと C の Web**: ほかの人が作った C のコードを、EL0（OS のメモリ・ハードウェア・ファイル・ネットワークに手を出せない）で動かせます（`sandbox FILE.c`）。中身が C のプログラムの小さな Web（`cweb URL`）も。ページは HTTP で取ってきて SHA-256 で確かめ、リンクでつなぎます（[docs/cweb.md](docs/cweb.md)）。
 
 ## 動かす
 
@@ -32,7 +32,7 @@ Hello, Monocs!
 git clone --recursive https://github.com/wildflare/monocs
 cd monocs
 sudo apt install build-essential gdb qemu-system-arm qemu-user picocom mtools
-make             # カーネル build/kslim/kernel8.img（自作のコンパイラで作る）
+make             # カーネル build/kslim/kernel8.img（slimcc-a64 で作る）
 make qemu        # まず QEMU（raspi3b）で試す
 make sdimage     # SD カードのイメージ build/sdcard.img
 ```
