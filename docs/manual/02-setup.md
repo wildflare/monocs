@@ -22,7 +22,7 @@ sudo apt install build-essential gdb qemu-system-arm qemu-user picocom mtools
 リポジトリの一番上で:
 
 ```sh
-make             # 標準のカーネル（自作のコンパイラで作る）build/kslim/kernel8.img
+make             # 標準のカーネル（slimcc-a64 で作る）build/kslim/kernel8.img
 make sdimage     # SD カードのイメージ build/sdcard.img（64MB、FAT32）
 make qemu        # 実機の前に QEMU で起動してみる（終わるには Ctrl-A、X）
 ```

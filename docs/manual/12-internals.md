@@ -160,9 +160,10 @@ run hello.c / 名前 / make
 ## 12.14 コンパイラ slimcc-a64
 
 - 元は slimcc（C11 のコンパイラ、MIT。`cc/UPSTREAM.md`）。AArch64 向けに作り直し、`cc/` で直接直している。
-- C23、SSA の中間表現（`cc/ir.inc`）、インライン展開、ループの最適化、Cortex-A53 向けの命令の並べ替え（`cc/sched.inc`）、strict aliasing、OpenMP（`cc/omp.inc`）。
+- C23、SSA の中間表現（`cc/ir.inc`。AArch64 のレジスタ・呼び出し規約は `cc/ir_a64.inc`、命令を出すところは `cc/ir_a64_emit.inc`。別の CPU を足すときの手がかりは `docs/slimcc-codegen.md` の 0.1）、インライン展開、ループの最適化、Cortex-A53 向けの命令の並べ替え（`cc/sched.inc`）、strict aliasing、OpenMP（`cc/omp.inc`）。
 - 内蔵アセンブラ（`cc/assembler.c`）とリンカ slimld（`cc/ld.c`）。どちらも GNU as・ld と同じ結果になることを確かめている。
-- 出すコードは GCC -O2 より約 1.5 倍遅い。縮める作業の手引きは `docs/slimcc-codegen.md`。
+- 分岐を減らす変形（csel・ccmp・tbz・cset）、switch の表引きとビットの表、呼び出しのある関数でも x0〜x7 を値に使うレジスタの割り当て（2026-11-27）。
+- 出すコードは GCC -O2 と比べて、整数・文字列の計算で約 1.02 倍、浮動小数点の計算で約 1.3 倍、カーネルの中のコンパイラで約 1.3 倍遅い（2026-11-27）。縮める作業の手引きは `docs/slimcc-codegen.md`。
 
 ## 12.15 ソースの場所
 

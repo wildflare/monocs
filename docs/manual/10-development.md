@@ -6,8 +6,8 @@ OS そのものを直して実機で試すときの手順です。作業は Pi 5
 
 | コマンド | 作るもの |
 |---|---|
-| `make` | 標準のカーネル（自作のコンパイラで作る）`build/kslim/kernel8.img` |
-| `make kernel-gcc` | 比べる用の GCC 版 `build/kernel8.img`（約 1.5 倍速い。ふだんは使わない） |
+| `make` | 標準のカーネル（slimcc-a64 で作る）`build/kslim/kernel8.img` |
+| `make kernel-gcc` | 比べる用の GCC 版 `build/kernel8.img`（中のコンパイラが約 1.3 倍速い。ふだんは使わない） |
 | `make cc` | コンパイラ slimcc-a64（Linux で動くもの）`cc/slimcc` |
 | `make sdimage` | SD カードのイメージ `build/sdcard.img` |
 | `make sdimage-self` | セルフホスト用の材料つきイメージ（`build/selfsrc` も作る） |
@@ -64,8 +64,8 @@ USB・UART のときは、試しの起動をせずに直接書きます。
 | `/usr/bin` のコマンド・`/usr/sbin` のサービス | `sh tools/update_bin.sh`（ソースを入れ替えて再起動） |
 | 共有のライブラリ | `sh tools/tls/mklib.sh && nos.py pushdir build/lib /usr/lib` |
 | ヘッダー（`monocs.h` など） | `nos.py push os/api/include/monocs.h /usr/include/monocs.h` |
-| 自分のアプリ（Linux のフォルダのまま） | `sh tools/apps/push.sh ~/dev/tools/NAME`（`/root/apps/名前` へ） |
-| エディタ mi | `sh tools/apps/mi.sh` |
+| 自分のアプリ（Linux のフォルダのまま） | `sh tools/apps/push.sh ~/dev/tools/NAME`（`/root/apps/名前` へ。作るのに要るファイルだけ）。`-a` を付けると、フォルダの中身を全部（文書・テストなども。git の設定は除く）送り、手元と同じ中身になる |
+| エディタ mi | `sh tools/apps/mi.sh`（`push.sh -a`。手元の mini-editor と同じ中身になる） |
 
 **サービスやコマンドが新しい OS の関数を使うときは、先にヘッダーを送ります**（古いヘッダーのままだとコンパイルできず、サービスが動かない）。
 

@@ -124,7 +124,8 @@
 |---|---|
 | `tools/uart/nos.py` | 実機の操作（[第 10 章](10-development.md)） |
 | `tools/update_bin.sh` | /usr/bin・/usr/sbin を入れ替える |
-| `tools/apps/push.sh DIR` | 自分のアプリを /root/apps に送る |
+| `tools/apps/push.sh [-a] DIR` | 自分のアプリを /root/apps に送る（`-a` でフォルダの中身を全部。手元と同じ中身に） |
+| `tools/apps/mi.sh` | エディタ mi を送る（`push.sh -a`） |
 | `tools/test/verify.sh`・`hwcheck.sh` | 検証一式（QEMU・実機） |
 | `tools/mkimg.sh`・`mksd.sh` | SD カードのイメージ・中身を作る |
 | `tools/pi5/setup-usbnet.sh`・`setup-chrony.sh` | Pi 5 の準備 |

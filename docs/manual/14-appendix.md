@@ -45,7 +45,7 @@
 | OS API の表 | アプリが呼べる OS の関数の一覧（`os/api/api.def`）。名前で番地を引いてつなぐ |
 | コンパイルのキャッシュ | コンパイルした結果を `/var/cache/slimcc` に覚えたもの。2 回目から速い |
 | セルフホスト | Monocs の上で Monocs 自身（C ライブラリとカーネル）を作り直すこと |
-| 標準のカーネル・slimcc 版 | 自作のコンパイラで作ったカーネル（`build/kslim/kernel8.img`）。ふだん使う |
+| 標準のカーネル・slimcc 版 | slimcc-a64 で作ったカーネル（`build/kslim/kernel8.img`）。ふだん使う |
 | GCC 版 | 比べるために GCC で作ったカーネル（`build/kernel8.img`） |
 | 試しの起動（tryboot） | 新しいカーネルを 1 回だけ試し、確かめられなければ前に戻す仕組み |
 | ウォッチドッグ | 固まったら機械をリセットする時計 |
@@ -54,7 +54,7 @@
 | SDHOST・EMMC | SD カードのコントローラ 2 つ。SD カードは SDHOST、EMMC は Wi-Fi のチップに使う |
 | lwIP | TCP/IP の部品（third_party） |
 | picolibc | C ライブラリ（third_party） |
-| slimcc-a64 | 自作のコンパイラ（`cc/`） |
+| slimcc-a64 | 内蔵のコンパイラ（`cc/`。slimcc をもとに AArch64 向けに作り直したもの） |
 | slimld | 自作のリンカ |
 | nos.py | Pi 5 から実機を操作する道具 |
 
