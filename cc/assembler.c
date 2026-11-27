@@ -346,6 +346,7 @@ typedef struct {
   int64_t addend;
   int line;
   char *sub;        // FX_DIFF32 の引くシンボル
+  AsmSymbol *symp;   // sym の記号（add_fixup で引いたもの。resolve_fixups で引き直さない。2026-11-27）
 } Fixup;
 
 TLS static Fixup *fixups;
@@ -359,6 +360,7 @@ static void add_fixup(FixKind kind, int rtype, bool adjustable, const char *sym,
     .adjustable = adjustable, .sym = tmp_strdup(sym), .addend = addend, .line = src_line,
   };
   AsmSymbol *s = get_symbol(sym);
+  fixups[nfix - 1].symp = s;
   s->referenced = true;
   // TLS のリロケーション（R_AARCH64_TLS*。512〜573）で参照したシンボルは STT_TLS（GNU as と同じ。
   // 未定義の外部の TLS 変数も TLS になり、リンカが TLS の参照と確かめられる）
@@ -382,7 +384,7 @@ static void resolve_fixups(void) {
   for (int i = 0; i < nfix; i++) {
     Fixup *f = &fixups[i];
     src_line = f->line;
-    AsmSymbol *s = resolve_symbol(get_symbol(f->sym));
+    AsmSymbol *s = resolve_symbol(f->symp ? f->symp : get_symbol(f->sym));
     if (f->kind == FX_DIFF32) {
       AsmSymbol *b = resolve_symbol(get_symbol(f->sub));
       if (!s->defined || !b->defined || s->sect != b->sect)

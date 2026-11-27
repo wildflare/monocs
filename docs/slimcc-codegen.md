@@ -647,3 +647,14 @@ sh tools/slimcc/devbench.sh build/kernel8.img build/kslim/kernel8.img   # 両方
   確かめ: make cc-test、verify.sh（quick なし。すべて一致）。
 - 試して戻したもの: ir_read_var の、変数が最後に書かれたブロックと値を変数（Obj）に覚える形。同じブロックで読むときに
   ブロックの一覧を探さずに済むが、書くたびに覚えを 3 つ書く分が重く、命令が増えた（666.2 → 667.3M）。
+
+## 25. 内蔵アセンブラの行き先の記号を引き直さない（2026-11-27）
+
+- Pi 5 の `perf record -g --call-graph fp` で、名前の表を引く get_entry_h（3.2%）の呼び出し元を見ると、約 3 分の 1 が内蔵アセンブラの
+  get_symbol（名前 → 記号。子も入れて 3.2%）だった。分岐などの行き先（Fixup）を足すとき（add_fixup）に引き、最後に解くとき
+  （resolve_fixups）に同じ名前でもう 1 回引いていた。add_fixup で引いた記号を Fixup の symp に覚え、resolve_fixups は引き直さない
+  （記号の表に足すのは get_symbol だけで、同じ名前はいつも同じ記号。表は 1 つの .o の間だけ）。
+- 効果: Pi 5 で codegen.c のコンパイルの命令の数 slimcc で作った slimcc 664.8 → 661.3M。実機のカーネルの中のコンパイラ
+  parse.c 506 → 503M、codegen.c 1,144 → 1,137M（0.6%）。
+- 確かめ: cmp_s.sh、cmp_o.sh、HEAD のコンパイラと .o が同じ（ソースの変わった assembler.c を除く 10 ファイル）、make cc-test、
+  verify.sh（quick なし。すべて一致）。
