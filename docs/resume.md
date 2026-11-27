@@ -174,9 +174,9 @@ GCC 版の差（今は約 1.5 倍）を縮める。今の位置・測り方（`t
 （`tools/slimcc/cmp_s.sh`・`cmp_o.sh`、make cc-test の GCC と比べる試験）・候補・試して見送ったものは
 `docs/slimcc-codegen.md` にまとめてある。
 
-**C の Web**（中身が C のソースの WWW。2026-11-22 の構想。ユーザーが作りたい。2026-11-26（木）の夜から始める）: `docs/cweb.md`。土台はサンドボックス、まず `cc --report` から。
+**C の Web**（中身が C のソースの WWW。2026-11-22 の構想、2026-11-26 に作った）: ブラウザ `cweb URL`、リンク（cweb_go・cweb_back）、目録 cweb.txt のフォルダのページ、例 `/usr/share/samples/cweb/index.c`。使い方と次の候補（https は保留）は `docs/cweb.md`。
 
-**サンドボックス**（ほかの人が作った C のコードを安全に動かす。2026-11-22 に設計を相談、まだ作らない。ユーザーの「まだ作るのは待って」）: 決めたことは `docs/sandbox.md`（EL0 ＋ 画面・キー・マウスだけ、コンパイラは 1 つ、`run URL` の置き場所と許した版のハッシュ、`cc --report`）。
+**サンドボックス**（ほかの人が作った C のコードを安全に動かす。2026-11-22 に設計を決め、2026-11-26 に作った）: `sandbox FILE.c|URL`（EL0 で動かす。システムコールは画面・キー・時刻・眠る・乱数とページの移動だけ。中の C ライブラリと curses は /usr/lib/sandbox）、`sandbox http://…`（HTTP で取ってきて SHA-256 で確かめる）、`cc --report`。設計と作ったものは `docs/sandbox.md`、確かめ方は `sbtest`。
 
 **Wi-Fi を速くする**（2026-11-22 に 1・2 と TCP の窓をした。CLAUDE.md の「Wi-Fi を速くする（2026-11-22）」）: 測り方は
 `python3 tools/perf/wifibench.py recv|send MB`（Monocs で tools/perf/wifibench.c を /root/work に置いて動かす）と `wifi perf`。
