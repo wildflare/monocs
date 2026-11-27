@@ -381,6 +381,7 @@ static bool is_local_defined(AsmSymbol *s) {
 }
 
 static void resolve_fixups(void) {
+  obj->named_marked = true;
   for (int i = 0; i < nfix; i++) {
     Fixup *f = &fixups[i];
     src_line = f->line;
@@ -446,10 +447,12 @@ static void resolve_fixups(void) {
     default:        type = f->rtype; break;
     }
     bool adjustable = f->kind != FX_OTHER || f->adjustable;
-    if (adjustable && is_local_defined(s))
+    if (adjustable && is_local_defined(s)) {
       add_reloc(f->sec, f->ofs, type, s->sect->name, true, s->value + f->addend);
-    else
+    } else {
       add_reloc(f->sec, f->ofs, type, s->name, false, f->addend);
+      s->rel_named = true;
+    }
   }
 }
 
@@ -4275,9 +4278,9 @@ typedef struct {
 } Shdr;
 
 // シンボル表に入れるか。.L で始まるシンボルは、リロケーションが名前で参照するときだけ入れる
-static bool is_elf_symbol(AsmSymbol *s, HashMap *by_name) {
+static bool is_elf_symbol(AsmSymbol *s, HashMap *by_name, bool marked) {
   if (has_prefix(s->name, ".L"))
-    return hashmap_get(by_name, s->name) != NULL;
+    return marked ? s->rel_named : hashmap_get(by_name, s->name) != NULL;
   if (s->defined)
     return true;
   return s->referenced || s->bind_set;
@@ -4302,8 +4305,9 @@ void asm_write_elf(AsmObj *o, FILE *out) {
   Shdr *sh = calloc(shnum, sizeof(Shdr));
 
   // リロケーションが名前で参照するシンボル
+  // （アセンブルした直後なら、記号の rel_named で決める。名前の表を作らず、記号ごとに引かない。2026-11-27）
   HashMap by_name = {0};
-  for (int i = 0; i < nsect; i++)
+  for (int i = 0; i < nsect && !o->named_marked; i++)
     for (int j = 0; j < o->sects[i]->nrel; j++)
       if (!o->sects[i]->rels[j].is_section)
         hashmap_put(&by_name, o->sects[i]->rels[j].sym, (void *)1);
@@ -4329,7 +4333,7 @@ void asm_write_elf(AsmObj *o, FILE *out) {
       first_global = nsyms;
     for (int i = 0; i < o->nsym; i++) {
       AsmSymbol *s = o->syms[i];
-      if (!is_elf_symbol(s, &by_name))
+      if (!is_elf_symbol(s, &by_name, o->named_marked))
         continue;
       bool local = s->defined && !s->is_common && s->bind == ASM_STB_LOCAL;
       if (local != (pass == 0))

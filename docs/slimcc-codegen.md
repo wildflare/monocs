@@ -658,3 +658,16 @@ sh tools/slimcc/devbench.sh build/kernel8.img build/kslim/kernel8.img   # 両方
   parse.c 506 → 503M、codegen.c 1,144 → 1,137M（0.6%）。
 - 確かめ: cmp_s.sh、cmp_o.sh、HEAD のコンパイラと .o が同じ（ソースの変わった assembler.c を除く 10 ファイル）、make cc-test、
   verify.sh（quick なし。すべて一致）。
+
+## 26. .o を書くときに、記号ごとに名前の表を引かない（2026-11-27）
+
+- 25 の続き。名前の表（get_entry_h・fnv_hash）の呼び出し元を `perf script -F ip,sym` の呼び出しの並びから数えると、
+  get_symbol 32%・is_elf_symbol 18%・find_var 15%・preprocess2 9%・ident_keyword 8%。
+- is_elf_symbol（asm_write_elf が、記号を .o の記号表に入れるかを決める）: `.L` の記号は「名前で参照するリロケーションがあるか」を、
+  リロケーションの名前で作った表で引いていた（記号表の 2 回の回で 2 回ずつ）。名前で参照するリロケーションを作るのは
+  resolve_fixups の 1 か所だけなので、そこで記号に rel_named を付け、AsmObj に named_marked を立てる。asm_write_elf は
+  named_marked なら表を作らずに rel_named で決める（立っていない（asm_obj_load で読んだなど）なら今までどおり表で）。
+- 効果: Pi 5 で codegen.c のコンパイルの命令の数 slimcc で作った slimcc 661.3 → 653.2M、GCC で作った slimcc 448.5 → 442.2M。
+  実機のカーネルの中のコンパイラ parse.c 503 → 500M、codegen.c 1,138 → 1,130M（0.7%）。
+- 確かめ: 前のコンパイラと .o が同じ（10 ファイル）、cmp_o.sh、make cc-test、verify.sh（quick なし。すべて一致）。
+- 次: find_var（構文解析の変数の名前。スコープごとに表を引く）、preprocess2・ident_keyword（字句・前処理）。

@@ -1224,6 +1224,7 @@ typedef struct {
   bool referenced;
   int64_t common_align;
   char *equ;        // .set で別のシンボルと同じにしたとき、その名前
+  bool rel_named;   // 名前で参照するリロケーションがある（resolve_fixups が付ける。asm_write_elf の .L。2026-11-27）
 } AsmSymbol;
 
 typedef struct {
@@ -1235,6 +1236,7 @@ typedef struct {
   int32_t capsym;
   char **strs;      // asm_obj_load が作った、リロケーションの名前（セクション・シンボルの名前でないもの）
   int32_t nstr;
+  bool named_marked; // resolve_fixups が rel_named を付けた（付けていない（asm_obj_load で読んだ）なら名前の表で決める）
 } AsmObj;
 
 AsmObj *asm_assemble(const char *text, const char *filename);
