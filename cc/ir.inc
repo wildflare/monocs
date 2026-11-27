@@ -746,6 +746,7 @@ static bool ir_is_ssa_var(Obj *var) {
 // 関数の番号（ir_gen_fn ごとに増やす）。変数が覚えた場所（Obj の ir_gen・ir_ofs）は、番号が同じときだけ使う
 // （2026-11-27。前は ir_slot が変数ごとに全部の場所を順に比べていた）
 TLS static int64_t ir_slot_gen;
+TLS static bool ir_has_fsqrt;   // この関数で IR_FSQRT を作った（ir_mark_sqrt）
 
 static void ir_slot_at(Obj *var, int ofs) {
   ir_slots = ir_grow(ir_slots, &ir_capslots, ir_nslots + 1, sizeof(IrSlot));
@@ -1431,6 +1432,7 @@ static IrInst *ir_math_builtin(Node *node) {
     return NULL;
   IrInst *v = ir_cast(ir_expr(arg->arg_expr), arg->arg_expr->ty, arg->ty);
   IrInst *in = ir_un(is_sqrt ? IR_FSQRT : IR_FABS, v);
+  ir_has_fsqrt |= is_sqrt;
   in->fp = true;
   in->fsz = fsz;
   in->sym = fn;
@@ -3272,7 +3274,8 @@ static void ir_simplify_all(void) {
     for (IrInst *in = bb->first; in; in = in->next) {
       if (in->repl)
         continue;
-      ir_resolve_operands(in);
+      if (ir_repl_pending)
+        ir_resolve_operands(in);   // 置き換えがまだなければ、どの入力もたどる先がない（2026-11-27）
       IrInst *r = ir_simplify(in);
       if (r && r != in) {
         in->repl = r;
@@ -3392,7 +3395,8 @@ static void ir_cse(void) {
     for (IrInst *in = bb->first; in; in = in->next) {
       if (in->repl || !ir_cse_candidate(in))
         continue;
-      ir_resolve_operands(in);
+      if (ir_repl_pending)
+        ir_resolve_operands(in);
       uint64_t h = ir_expr_hash(in) & (cap - 1);
       IrInst *found = NULL;
       for (IrInst *c = table[h]; c; c = chain[c->id])
@@ -3850,6 +3854,8 @@ static bool ir_fp_nonneg(IrInst *v, int depth) {
 }
 
 static void ir_mark_sqrt(void) {
+  if (!ir_has_fsqrt)
+    return;   // この関数に平方根の命令はない（作るのは ir_math_builtin だけ。2026-11-27）
   for (int b = 0; b < ir_nblocks; b++) {
     IrBlock *bb = ir_blocks[b];
     if (bb->reachable)
@@ -5277,6 +5283,7 @@ static bool ir_gen_fn(Obj *fn) {
   ir_nloops = 0;
   ir_nslots = 0;
   ir_slot_gen++;
+  ir_has_fsqrt = false;
   ir_frame = 0;
   ir_fn = fn;
   ir_null_val = NULL;

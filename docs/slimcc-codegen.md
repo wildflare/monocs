@@ -635,3 +635,15 @@ sh tools/slimcc/devbench.sh build/kernel8.img build/kslim/kernel8.img   # 両方
 - 効果: Pi 5 で codegen.c のコンパイルの命令の数 slimcc で作った slimcc 687.4 → 666.2M（3.1% 減）、GCC で作った slimcc
   469.6 → 452.6M。実機のカーネルの中のコンパイラ parse.c 508 → 507M、codegen.c 1,174 → 1,148M（2.1%。局所変数の多い
   大きな関数で効く）。出すコードは変わらない（cmp_s.sh）。確かめ: make cc-test、verify.sh（quick なし。すべて一致）。
+
+## 24. 小さな省き（2026-11-27）
+
+- ir_mark_sqrt: 最適化の回ごとに関数の命令を全部たどって IR_FSQRT を探していた。作るのは ir_math_builtin の 1 か所だけなので、
+  その関数で作ったかの印（ir_has_fsqrt。ir_gen_fn で消す）がなければ探さない。
+- ir_simplify_all・ir_cse の命令ごとの ir_resolve_operands: 片付けていない置き換えの印（ir_repl_pending。21）が立っていないうちは、
+  どの入力もたどる先がないので、たどらない。
+- 効果: Pi 5 で codegen.c のコンパイルの命令の数 slimcc で作った slimcc 666.2 → 664.8M、GCC で作った slimcc 452.6 → 451.0M。
+  実機のカーネルの中のコンパイラ codegen.c 1,148 → 1,144M（0.35%）。出すコードは変わらない（cmp_s.sh）。
+  確かめ: make cc-test、verify.sh（quick なし。すべて一致）。
+- 試して戻したもの: ir_read_var の、変数が最後に書かれたブロックと値を変数（Obj）に覚える形。同じブロックで読むときに
+  ブロックの一覧を探さずに済むが、書くたびに覚えを 3 つ書く分が重く、命令が増えた（666.2 → 667.3M）。
