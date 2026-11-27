@@ -1,8 +1,8 @@
 # Monocs
 
-Raspberry Pi Zero 2 W のための、小さな自作 OS です。**電源を入れるとすぐシェルが出て、その場で C を書き、コンパイルして動かせる専用機**を目指しています。
+Raspberry Pi Zero 2 W のための、C で書いたシンプルなベアメタル OS です。**電源を入れるとすぐシェルが出て、その場で C を書き、コンパイルして動かせる専用機**を目指しています。
 
-A small hobby OS for the Raspberry Pi Zero 2 W: boot straight into a shell, write C, compile it on the device and run it right away.
+A simple bare-metal OS written in C for the Raspberry Pi Zero 2 W: boot straight into a shell, write C, compile it on the device and run it right away.
 (The documentation is in Japanese.)
 
 ```
