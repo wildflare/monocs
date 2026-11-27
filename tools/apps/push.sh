@@ -1,7 +1,7 @@
 #!/bin/sh
 # Pi 5 のプログラムのフォルダ（Linux 用のソースと Makefile のまま）を、実機の /root/apps/名前 に送る（ソースのまま。
 # 名前で打てば、その場でコンパイルして動く。2 回目からはキャッシュ）。
-#   sh tools/apps/push.sh [-c] DIR [NAME]
+#   sh tools/apps/push.sh [-c] [-a] DIR [NAME]
 # NAME を省くと、Makefile が作るプログラムの名前（Monocs と同じ解釈器 tools/make/make_eval.c で決める。
 # file-dir-manager → fd）。Makefile がなければフォルダの名前。実機では  NAME 引数...  で動く（PATH の /root/apps）。
 # 送るもの: .c・.h（サブフォルダも）、Makefile・makefile・GNUmakefile、compile_flags.txt、.runignore。
@@ -10,11 +10,24 @@
 # Makefile がないときは、フォルダの .c をすべてコンパイルする（除くものは .runignore に書く）。
 # 実機が使われているとき（アプリが動いている・telnet・ssh でつながっている）は、何もせずに止まる（nos.py）。
 # -c: 送る前に実機の /root/apps/NAME を消す（Pi 5 で消したファイルが実機に残らないように。実機で直したものも消える）
+# -a: フォルダの中身を全部送る（2026-11-27。ユーザーの「同じプログラムが動くようにしたい」から。Pi 5 と実機で同じ中身に）。
+#     git のリポジトリなら、git が管理しているファイルと、管理していないが .gitignore で除いていないファイル
+#     （git ls-files -co --exclude-standard。中身は作業中のまま、コミットしていない変更も。.gitignore・.gitattributes
+#     などの git の設定は除く）。git でなければ、
+#     .git と build を除いた全部。Makefile があれば、Monocs が作るのは Makefile に書かれた .c だけなので、
+#     文書・テスト・Windows 用のファイルなどを送っても作り方は変わらない
 set -eu
 cd "$(dirname "$0")/../.."
 clean=0
-[ "${1:-}" = "-c" ] && { clean=1; shift; }
-[ $# -ge 1 ] || { echo "usage: sh tools/apps/push.sh [-c] DIR [NAME]" >&2; exit 2; }
+all=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+    -c) clean=1; shift ;;
+    -a) all=1; shift ;;
+    *) break ;;
+    esac
+done
+[ $# -ge 1 ] || { echo "usage: sh tools/apps/push.sh [-c] [-a] DIR [NAME]" >&2; exit 2; }
 DIR=$(cd "$1" && pwd)
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
@@ -26,9 +39,19 @@ if [ -z "$NAME" ]; then
 fi
 case "$NAME" in */*|.*|'') echo "push.sh: 名前が正しくない: $NAME" >&2; exit 2 ;; esac
 mkdir "$T/app"
-(cd "$DIR" && find . -mindepth 1 \( -name '.*' -o -name build \) -prune -o -type f \
-    \( -name '*.c' -o -name '*.h' -o -name Makefile -o -name makefile -o -name GNUmakefile \
-       -o -name compile_flags.txt \) -print) | while IFS= read -r f; do
+list_files() {
+    if [ $all -eq 1 ] && git -C "$DIR" rev-parse --is-inside-work-tree > /dev/null 2>&1; then
+        (cd "$DIR" && git ls-files -co --exclude-standard | grep -v '^\.git')   # .gitignore などの git の設定は送らない
+    elif [ $all -eq 1 ]; then
+        (cd "$DIR" && find . -mindepth 1 \( -name .git -o -name build \) -prune -o -type f -print)
+    else
+        (cd "$DIR" && find . -mindepth 1 \( -name '.*' -o -name build \) -prune -o -type f \
+            \( -name '*.c' -o -name '*.h' -o -name Makefile -o -name makefile -o -name GNUmakefile \
+               -o -name compile_flags.txt \) -print)
+    fi
+}
+list_files | while IFS= read -r f; do
+    [ -f "$DIR/$f" ] || continue    # git が管理しているが、作業中に消したもの
     mkdir -p "$T/app/$(dirname "$f")"
     cp "$DIR/$f" "$T/app/$f"
 done

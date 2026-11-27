@@ -564,7 +564,7 @@ SD カードを差し替えずに試すときは、Pi 5 から `rpiboot` で USB
 - 実機を使っている最中に打ち込まない（2026-11-14〜15。ユーザーが実機で mi・less を開いていたとき、nos.py のコマンドの文字をその画面に打ち込んでしまった。ユーザーの許可で直した）:
   - httpd の `GET /.status`（`app 0|1`: コア 0 でアプリが動いているか、`remote 0|1`: telnet・ssh でつないでいるか）。OS API に `monocs_app_running`（app_is_running）・`monocs_console_remote`（contap_active。写しが開いている）。
   - nos.py の check_idle: 打ち込む前に /.status を見て、使われていれば 3 秒待ち直してから止まる（`--force` か NOS_FORCE=1 で続ける。/.status のない古いカーネル・HTTP が使えないときは調べない）。hwcheck の USB シリアルの確認（わざとアプリの実行中に UART から打つ）は --force。
-  - `tools/apps/push.sh [-c] DIR [NAME]`: mi.sh を一般にしたもの。.c・.h（サブフォルダも）・Makefile・compile_flags.txt・.runignore を /apps/名前 に送る。名前は Monocs と同じ解釈器（tools/make/make_eval.c）で決めた Makefile のプログラムの名前（file-dir-manager → fd）、なければフォルダの名前。mi.sh は push.sh を呼ぶだけに。
+  - `tools/apps/push.sh [-c] DIR [NAME]`: mi.sh を一般にしたもの。.c・.h（サブフォルダも）・Makefile・compile_flags.txt・.runignore を /apps/名前 に送る。名前は Monocs と同じ解釈器（tools/make/make_eval.c）で決めた Makefile のプログラムの名前（file-dir-manager → fd）、なければフォルダの名前。mi.sh は push.sh を呼ぶだけに。2026-11-27 から `-a` でフォルダの中身を全部（git なら管理しているファイルと .gitignore で除いていないもの。git の設定は除く）送り、mi.sh は `-a` を使う（ユーザーの「同じプログラムが動くようにしたい」から。実機の /root/apps/mi が手元の mini-editor と同じ中身。コードは変えない）。
   - 確認: アプリの実行中・telnet の接続中に nos.py cmd と push.sh が止まる、--force で進む、fd・mi を送れる。
 - 全体の見直し（2026-11-14。ユーザーの依頼: 不具合を探す、重複・使われていないコードの整理、複雑な部分を簡単に、速さは守る）:
   - 調べ方: 厳しい警告（-Wshadow -Wunused-macros -Wmissing-prototypes -Wredundant-decls）、GCC の静的解析（-fanalyzer。OS・サービス・コマンド・ライブラリ。指摘なし）、リンカの --gc-sections --print-gc-sections で使われていない関数、長い関数の一覧、最近書いた部分（Wi-Fi・ネットワーク・SSH・TLS・展開・コマンド）を読む。古い部分（コンパイラ cc/、VFS、USB など）は機械的な検査だけで、1 行ずつは読み直していない。
