@@ -20,7 +20,7 @@ Hello, Monocs!
 - **速さが命**: カーネルが動き出してから、シェルまで約 1.5 秒（Wi-Fi で ssh できるまで約 6 秒）。小さなプログラムは 0.1 秒前後でコンパイルできます。
 - **シンプルな作り**: 同時に動くアプリは 1 つ。ふつうのアプリは OS と同じアドレス空間・同じ特権で動き、システムコールを通さずに OS の関数を直接呼びます。4 つのコアのうち 1 つは裏で動くサービス用で、アプリはほかのコアを独り占めできます。
 - **Linux に合わせた使い勝手**: bash に近いシェル、Linux と同じ書き方で使える C ライブラリ（POSIX の関数）・端末・ソケット・pthread・OpenMP。Lua・SQLite・vim・QuickJS をソースのまま動かしています。
-- **つないで使う**: USB（シリアル・イーサネット）、内蔵 Wi-Fi（WPA2）、SSH（sftp・scp・sshfs）、telnet、HTTP・HTTPS（curl）。
+- **つないで使う**: USB（シリアル・イーサネット）、UART（GPIO14・15、3Mbps。起動の表示も見える）、内蔵 Wi-Fi（WPA2）、SSH（sftp・scp・sshfs）、telnet、HTTP・HTTPS（curl）。
 - **電子工作**: GPIO・I2C・SPI・ソフトウェアの UART・PWM のコマンドとライブラリ。
 - **サンドボックスと C の Web**: ほかの人が作った C のコードを、EL0（ARM のいちばん権限の弱いモード。OS のメモリ・ハードウェア・ファイル・ネットワークに手を出せない）で動かせます（`sandbox FILE.c`）。中身が C のプログラムの小さな Web（`cweb URL`）も。ページは HTTP で取ってきて SHA-256 で確かめ、リンクでつなぎます（[docs/cweb.md](docs/cweb.md)）。
 
