@@ -743,15 +743,22 @@ static bool ir_is_ssa_var(Obj *var) {
 }
 
 // 変数の場所を決まったオフセットにする（スタックで渡された引数: x29 + 16 からの正のオフセット。2026-11-21）
+// 関数の番号（ir_gen_fn ごとに増やす）。変数が覚えた場所（Obj の ir_gen・ir_ofs）は、番号が同じときだけ使う
+// （2026-11-27。前は ir_slot が変数ごとに全部の場所を順に比べていた）
+TLS static int64_t ir_slot_gen;
+
 static void ir_slot_at(Obj *var, int ofs) {
   ir_slots = ir_grow(ir_slots, &ir_capslots, ir_nslots + 1, sizeof(IrSlot));
   ir_slots[ir_nslots++] = (IrSlot){var, ofs};
+  if (var->ir_gen != ir_slot_gen) {   // 前と同じく、最初に足した場所を返す
+    var->ir_gen = ir_slot_gen;
+    var->ir_ofs = ofs;
+  }
 }
 
 static int ir_slot(Obj *var) {
-  for (int i = 0; i < ir_nslots; i++)
-    if (ir_slots[i].var == var)
-      return ir_slots[i].ofs;
+  if (var->ir_gen == ir_slot_gen)
+    return var->ir_ofs;
   if (var->ty->kind == TY_VLA || var->ty->size < 0)
     ir_unsupported();
   int align = MAX(var->ty->align, var->alt_align);
@@ -760,6 +767,8 @@ static int ir_slot(Obj *var) {
   ir_frame = align_to(ir_frame + MAX(var->ty->size, 1), MAX(align, 1));
   ir_slots = ir_grow(ir_slots, &ir_capslots, ir_nslots + 1, sizeof(IrSlot));
   ir_slots[ir_nslots++] = (IrSlot){var, -ir_frame};
+  var->ir_gen = ir_slot_gen;
+  var->ir_ofs = -ir_frame;
   return -ir_frame;
 }
 
@@ -3917,10 +3926,39 @@ static bool ir_m2r_size_ok(int64_t off, int size) {
   return (size == 1 || size == 2 || size == 4 || size == 8) && off % size == 0 && off / 8 == (off + size - 1) / 8;
 }
 
+// 場所の番号を、オフセットの小さい順に並べた表（ir_m2r_find が二分探索で引く。場所の範囲は重ならない）
+TLS static int *ir_m2r_order;
+
+// オフセット ofs を含む場所の番号（なければ -1）。前は番地ごとに全部の場所を順に比べていて、局所変数の多い
+// 関数で重かった（Pi 5 で ir_mem2reg が 2%。2026-11-27）
+static int ir_m2r_find(int64_t ofs) {
+  int lo = 0, hi = ir_nslots;   // ir_m2r_order[lo..hi) のうち、オフセットが ofs 以下の最後
+  while (lo < hi) {
+    int mid = (lo + hi) / 2;
+    if (ir_slots[ir_m2r_order[mid]].ofs <= ofs)
+      lo = mid + 1;
+    else
+      hi = mid;
+  }
+  if (lo == 0)
+    return -1;
+  int i = ir_m2r_order[lo - 1];
+  return ofs - ir_slots[i].ofs < MAX(ir_slots[i].var->ty->size, 1) ? i : -1;
+}
+
+static int ir_m2r_cmp(const void *x, const void *y) {
+  int64_t a = ir_slots[*(const int *)x].ofs, b = ir_slots[*(const int *)y].ofs;
+  return a < b ? -1 : a > b;
+}
+
 static bool ir_mem2reg(void) {
   int ns = ir_nslots;
   if (!ns)
     return false;
+  ir_m2r_order = ir_alloc(sizeof(int) * ns);
+  for (int i = 0; i < ns; i++)
+    ir_m2r_order[i] = i;
+  qsort(ir_m2r_order, ns, sizeof(int), ir_m2r_cmp);
   int *aslot = ir_alloc(sizeof(int) * (ir_nvals + 1));      // 場所の番号 + 1（0 はなし）
   int64_t *aoff = ir_alloc(sizeof(int64_t) * (ir_nvals + 1));
   bool *esc = ir_alloc(ns), *acc = ir_alloc(ns);
@@ -3933,13 +3971,10 @@ static bool ir_mem2reg(void) {
   for (int bi = 0; bi < ir_nrpo; bi++)
     for (IrInst *in = ir_rpo[bi]->first; in; in = in->next) {
       if (in->op == IR_LADDR) {
-        for (int i = 0; i < ns; i++) {
-          int64_t o = in->imm - ir_slots[i].ofs;
-          if (o >= 0 && o < MAX(ir_slots[i].var->ty->size, 1)) {
-            aslot[in->id] = i + 1;
-            aoff[in->id] = o;
-            break;
-          }
+        int i = ir_m2r_find(in->imm);
+        if (i >= 0) {
+          aslot[in->id] = i + 1;
+          aoff[in->id] = in->imm - ir_slots[i].ofs;
         }
       } else if (in->op == IR_ADD && in->a && aslot[in->a->id] && in->b && in->b->op == IR_CONST) {
         int s = aslot[in->a->id] - 1;
@@ -3950,10 +3985,11 @@ static bool ir_mem2reg(void) {
         aoff[in->id] = o;
       }
       // 命令が直接書く場所（構造体の戻り値・レジスタで渡された構造体の引数）
-      if ((in->op == IR_CALL && in->ty && in->rtn_slot) || in->op == IR_PARAM_STRUCT)
-        for (int i = 0; i < ns; i++)
-          if (in->rtn_slot >= ir_slots[i].ofs && in->rtn_slot < ir_slots[i].ofs + MAX(ir_slots[i].var->ty->size, 1))
-            esc[i] = true;
+      if ((in->op == IR_CALL && in->ty && in->rtn_slot) || in->op == IR_PARAM_STRUCT) {
+        int i = ir_m2r_find(in->rtn_slot);
+        if (i >= 0)
+          esc[i] = true;
+      }
     }
   // 使い方を調べる
   for (int bi = 0; bi < ir_nrpo; bi++)
@@ -5240,6 +5276,7 @@ static bool ir_gen_fn(Obj *fn) {
   ir_capdup = 0;
   ir_nloops = 0;
   ir_nslots = 0;
+  ir_slot_gen++;
   ir_frame = 0;
   ir_fn = fn;
   ir_null_val = NULL;

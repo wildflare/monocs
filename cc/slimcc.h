@@ -554,6 +554,9 @@ struct Obj {
   bool is_compound_lit;
   bool is_string_lit;
   int alt_align;
+  // ir.inc の ir_slot の覚え: ir_gen が今の関数の番号（ir_slot_gen）と同じなら、場所は ir_ofs（2026-11-27）
+  int64_t ir_gen;
+  int ir_ofs;
 
   // Local variable
   int ofs;
